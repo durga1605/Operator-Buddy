@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Connection Error</title>
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'css/dberror.css' %}">
+</head>
+
+<body>
+    <div id="dbErrorConfig" data-error-message="{{ error_message|escapejs }}"></div>
+    <div class="error-container">
+        <img src="https://cdn-icons-png.flaticon.com/512/2748/2748558.png" alt="Connection Error">
+        <h2>{{ error_message }}</h2>
+        <p>Please check your database connection or contact the administrator.</p>
+    </div>
+    <script src="{% static 'js/dberror.js' %}"></script>
+</body>
+
+</html>

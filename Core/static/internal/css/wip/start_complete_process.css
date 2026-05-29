@@ -1,0 +1,33 @@
+/* WIP scan workflow — barcode-first inputs */
+
+.wip-scan-input {
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    letter-spacing: 0.02em;
+}
+
+.wip-scan-input:focus {
+    border-color: var(--admin-primary, #2563eb);
+    box-shadow: 0 0 0 0.2rem rgba(37, 99, 235, 0.2);
+}
+
+.wip-scan-input.wip-scan-input--active {
+    background-color: rgba(37, 99, 235, 0.06);
+}
+
+.wip-scan-input:disabled {
+    background-color: var(--bs-secondary-bg, #e9ecef);
+    cursor: not-allowed;
+}
+
+.wip-scan-status {
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.wip-scan-status.is-success {
+    background-color: #198754 !important;
+}
+
+.wip-scan-status.is-error {
+    background-color: #dc3545 !important;
+}

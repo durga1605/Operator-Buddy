@@ -1,0 +1,80 @@
+{% extends 'layouts/index.html' %}
+{% load static %}
+{% block body %}
+<link rel="stylesheet" href="{% static 'internal/css/plant_select/plant_select.css' %}">
+
+<div class="hero-center">
+  <div class="plant-box">
+
+    <div class="plant-title">🏭 Plant Selection</div>
+    <div class="plant-sub">Select your working plant to continue</div>
+
+    <form method="get" action="{% url 'plant_selection' %}">
+      <label class="form-label">Choose Plant</label>
+
+      <label class="form-label">Choose Plant</label>
+
+      <div class="plant-select">
+        <input type="text" id="plantSearch" class="form-control plant-input" placeholder="🔍 Search or select plant..." autocomplete="off">
+
+        <input type="hidden" name="plant_code" id="plant_code" required>
+
+        <div id="plantDropdown" class="plant-dropdown d-none">
+          <div class="plant-option" data-value="041">Bosch - Kpalayam (041)</div>
+          <div class="plant-option" data-value="002">Center Of Excellence (002)</div>
+          <div class="plant-option" data-value="034">PGR - Fine Blanking (034)</div>
+          <div class="plant-option" data-value="143">VVP - Vallam (143)</div>
+          <div class="plant-option" data-value="123">P-Palayam (123)</div>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary w-100 btn-load">
+        Load Plant Data
+      </button>
+    </form>
+
+    {% if error %}
+    <div class="alert alert-danger mt-3">
+      {{ error }}
+    </div>
+    {% endif %}
+
+    <div class="footer-note">
+      Traceability System • Plant Access
+    </div>
+
+  </div>
+</div>
+
+{% if data %}
+<div class="data-section">
+  <div class="card shadow border-0">
+    <div class="card-header bg-primary text-white text-center fw-bold">
+      Data for Plant {{ selected_plant }}
+    </div>
+    <div class="table-responsive">
+      <table class="table table-bordered table-striped text-center mb-0">
+        <thead>
+          <tr>
+            {% for key in data.0.keys %}
+            <th>{{ key }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in data %}
+          <tr>
+            {% for val in row.values %}
+            <td>{{ val }}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+<script src="{% static 'internal/js/plant_select/plant_select.js' %}"></script>
+
+{% endblock body %}

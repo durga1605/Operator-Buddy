@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from django.shortcuts import render
-from ..services.db_connection_string import get_db_connection
+from ..components.db_connection_string import get_db_connection
 
 
 def traceability_logs(request, level, message, username=None, name=None):

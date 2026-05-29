@@ -1,0 +1,64 @@
+{% extends 'layouts/index.html' %}
+{% load static %}
+{% block body %}
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Access denied</title>
+
+    <link rel="stylesheet" href="{% static 'css/unauthorised.css' %}">
+</head>
+
+<body>
+    <div class="wrap">
+        <main class="card" role="alert" aria-live="polite">
+            <div class="logo" aria-hidden="true">🔒</div>
+
+            <div class="badge">
+                <span class="emoji" aria-hidden="true">🚫</span>
+                Access denied
+            </div>
+
+            <h1>You're not authorized to log in for this plant code</h1>
+
+            <p class="lead">
+                Please contact your administrator to request access or verify that your plant code is correct.
+            </p>
+
+            <div class="plant" aria-label="Plant code">
+                <span class="emoji" aria-hidden="true">🌱🏭</span>
+                Plant code: <span class="code" id="plant-code">PLT-XXXX</span>
+            </div>
+
+            <div class="actions">
+                <a class="btn primary" href="mailto:m.vishnunirmalan@lgb.co.in">
+                    <span class="emoji" aria-hidden="true">📧</span>
+                    Contact admin
+                </a>
+                <a class="btn" href="/logout">
+                    <span class="emoji" aria-hidden="true">↩️</span>
+                    Return to login
+                </a>
+                <a class="btn" href="/help/access">
+                    <span class="emoji" aria-hidden="true">📚</span>
+                    Access help
+                </a>
+            </div>
+
+            <p class="hint">
+                If you believe this is a mistake, share the timestamp and your user ID with the admin for quicker troubleshooting.
+            </p>
+
+            <div class="footer">
+                <span><span class="emoji" aria-hidden="true">🛡️</span> Security event ID: <span class="code">SEC-{{REQUEST_ID}}</span></span>
+                <span><span class="emoji" aria-hidden="true">⏰</span> {{CURRENT_TIME}}</span>
+            </div>
+        </main>
+    </div>
+    <script src="{% static 'js/unauthorised.js' %}"></script>
+</body>
+
+</html>
+
+{% endblock body %}

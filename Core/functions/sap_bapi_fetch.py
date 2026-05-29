@@ -2,89 +2,93 @@
 
 from datetime import datetime
 import logging
-from ..services.callbapi import call_bapi
+from Core.functions.callbapi import call_bapi
 from ..auth.logs import traceability_logs
 
 logger = logging.getLogger(__name__)
 
 
-def fetch_bapi_workorder_details(work_order, sap_plant_code):
-    """Fetch work order details from BAPI for the given work order and plant code."""
-
-    bapi_params = {
-        "LV_WONO": work_order,
-        "PLANT": str(sap_plant_code),
-        "LV_FLAG": "Q",
-    }
-    bapi_response = call_bapi("ZPP_FM_MATWORKCENTER_DET", bapi_params)
-    if not isinstance(bapi_response, dict):
-        return None, False, "Invalid response from BAPI", 0, []
-
-    process_data = bapi_response.get("data", {}).get("IT_WOSTK_DET", [])
-    logger.debug("Full BAPI response for ZPP_FM_MATWORKCENTER_DET: %s", bapi_response)
-    # Extract the WOQTY from IP_STOCKQTY (use the first valid stock value)
-    woqty = 0
-    if process_data and isinstance(process_data, list):
-        try:
-            first_qty = next(
-                (
-                    item.get("IP_STOCKQTY")
-                    for item in process_data
-                    if item.get("IP_STOCKQTY") not in (None, "")
-                ),
-                0,
-            )
-            woqty = float(first_qty or 0)
-        except Exception:
-            woqty = 0
-
-    material_plant_list = [
-        {
-            "MATERIAL": item.get("OP_MATERIAL"),
-            "PLANT": item.get("PLANT"),
-            "OP_DESCRIPTION": item.get("OP_DESCRIPTION"),
-            "WOQTY": item.get("WOQTY"),
-            "IP_MATERIAL": item.get("IP_MATERIAL", ""),
-            "IP_DESCRIPTION": item.get("IP_DESCRIPTION", ""),
-            "IP_SLOC": item.get("IP_SLOC", ""),
-            "ALT_BOM": item.get("ALT_BOM", ""),
-            "IP_STOCKQTY": item.get("IP_STOCKQTY", 0),
-            "LOT_QTY": item.get("LOT_QTY", 0),
-        }
-        for item in process_data
-    ]
-
-    process_result = [
-        {
-            "MATERIAL": item.get("OP_MATERIAL"),
-            "WORK_CENTER": item.get("IDNRK"),
-            "PLANT": item.get("PLANT"),
-            "OP_DESCRIPTION": item.get("OP_DESCRIPTION", ""),
-            "WOQTY": item.get("WOQTY"),
-            "IP_MATERIAL": item.get("IP_MATERIAL", ""),
-            "IP_DESCRIPTION": item.get("IP_DESCRIPTION", ""),
-            "IP_SLOC": item.get("IP_SLOC", ""),
-            "ALT_BOM": item.get("ALT_BOM", ""),
-            "IP_STOCKQTY": item.get("IP_STOCKQTY", 0),
-            "LOT_QTY": item.get("LOT_QTY", 0),
-        }
-        for item in process_data
-    ]
-
-    return (
-        process_result,
-        bapi_response.get("status", "unknown"),
-        None,
-        woqty,
-        material_plant_list,
-    )
-
-
 def fetch_process_details(work_order, sap_plant_code):
     """Fetch process details for a work order using BAPI."""
     try:
+        bapi_params = {
+            "LV_WONO": work_order,
+            "PLANT": str(sap_plant_code),
+            "LV_FLAG": "Q",
+        }
+        bapi_response = call_bapi("ZPP_FM_MATWORKCENTER_DET", bapi_params)
+        if not isinstance(bapi_response, dict):
+            return None, False, "Invalid response from BAPI", 0, []
 
-        return fetch_bapi_workorder_details(work_order, sap_plant_code)
+        process_data = bapi_response.get("data", {}).get("IT_WOSTK_DET", [])
+        logger.debug(
+            "Full BAPI response for ZPP_FM_MATWORKCENTER_DET: %s", bapi_response
+        )
+
+        if not process_data:
+            return (
+                None,
+                False,
+                "Work order not found or already completed in SAP.",
+                0,
+                [],
+            )
+
+        woqty = 0
+        if process_data and isinstance(process_data, list):
+            try:
+                first_qty = next(
+                    (
+                        item.get("IP_STOCKQTY")
+                        for item in process_data
+                        if item.get("IP_STOCKQTY") not in (None, "")
+                    ),
+                    0,
+                )
+                woqty = float(first_qty or 0)
+            except Exception:
+                woqty = 0
+
+        material_plant_list = [
+            {
+                "MATERIAL": item.get("OP_MATERIAL"),
+                "PLANT": item.get("PLANT"),
+                "OP_DESCRIPTION": item.get("OP_DESCRIPTION"),
+                "WOQTY": item.get("WOQTY"),
+                "IP_MATERIAL": item.get("IP_MATERIAL", ""),
+                "IP_DESCRIPTION": item.get("IP_DESCRIPTION", ""),
+                "IP_SLOC": item.get("IP_SLOC", ""),
+                "ALT_BOM": item.get("ALT_BOM", ""),
+                "IP_STOCKQTY": item.get("IP_STOCKQTY", 0),
+                "LOT_QTY": item.get("LOT_QTY", 0),
+            }
+            for item in process_data
+        ]
+
+        process_result = [
+            {
+                "MATERIAL": item.get("OP_MATERIAL"),
+                "WORK_CENTER": item.get("IDNRK"),
+                "PLANT": item.get("PLANT"),
+                "OP_DESCRIPTION": item.get("OP_DESCRIPTION", ""),
+                "WOQTY": item.get("WOQTY"),
+                "IP_MATERIAL": item.get("IP_MATERIAL", ""),
+                "IP_DESCRIPTION": item.get("IP_DESCRIPTION", ""),
+                "IP_SLOC": item.get("IP_SLOC", ""),
+                "ALT_BOM": item.get("ALT_BOM", ""),
+                "IP_STOCKQTY": item.get("IP_STOCKQTY", 0),
+                "LOT_QTY": item.get("LOT_QTY", 0),
+            }
+            for item in process_data
+        ]
+
+        return (
+            process_result,
+            bapi_response.get("status", "unknown"),
+            None,
+            woqty,
+            material_plant_list,
+        )
 
     except ValueError:
         logger.exception("Value error during BAPI fetch.")
@@ -94,7 +98,6 @@ def fetch_process_details(work_order, sap_plant_code):
         traceability_logs(
             None, 3, f"Error fetching process details for WO {work_order}: {str(e)}"
         )
-
         return None, False, str(e), 0, []
 
 
@@ -115,7 +118,6 @@ def post_to_sap_prodent_ot(
         if not material_record:
             material_record = {}
 
-        # 🔥 SAP expects LAST 6 digits of EMP number
         raw_emp = str(operator_id or "").strip()
         operator_no = raw_emp[-6:] if len(raw_emp) >= 6 else raw_emp.zfill(6)
 
@@ -144,7 +146,7 @@ def post_to_sap_prodent_ot(
                     "ALT_BOM": material_record.get("ALT_BOM"),
                     "TOOL_CODE": "",
                     "WORK_CENTER": machine_id.strip(),
-                    "EMPNO": operator_no,  # ✅ Correct format for SAP
+                    "EMPNO": operator_no,
                     "PROD_QTY": str(ok_qty or 0),
                     "LOT_QTY": str(material_record.get("LOT_QTY", 0) or 0),
                     "REJ_QTY": str(rejected_count or 0),

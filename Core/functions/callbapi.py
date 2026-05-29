@@ -7,7 +7,7 @@ import logging
 from decimal import Decimal
 import traceback
 import requests
-from pyrfc import Connection
+from Config import settings
 from django.http import JsonResponse
 from django.conf import settings
 
@@ -31,7 +31,7 @@ def call_bapi(bapi, params):
         login_response = requests.post(
             bapi_api,
             headers=headers,
-            json={"apitype": "login", "client": "RPS"},
+            json={"apitype": "login", "client": "RQS"},
             timeout=10,
         )
         login_response.raise_for_status()

@@ -1,0 +1,106 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Operator Buddy — secure sign in">
+    <title>Sign In | Operator Buddy</title>
+
+    <link rel="stylesheet" href="{% static 'assets/css/bootstrap.min.css' %}">
+    <link rel="stylesheet" href="{% static 'assets/vendors/bootstrap-icons/bootstrap-icons.css' %}">
+    <link rel="stylesheet" href="{% static 'assets/css/style.css' %}">
+    <link rel="stylesheet" href="{% static 'internal/css/auth/login.css' %}">
+</head>
+
+<body class="auth-body login-page">
+    <div class="login-trace-bg" aria-hidden="true">
+        <canvas id="traceCanvas" class="login-trace-canvas"></canvas>
+        <div class="login-trace-grid"></div>
+        <div class="login-trace-scan"></div>
+        <div class="login-trace-glow login-trace-glow--1"></div>
+        <div class="login-trace-glow login-trace-glow--2"></div>
+    </div>
+
+    <div class="login-trace-hud" aria-hidden="true" data-hud-labels="WO-2405182,PART-AX-4412,STN-04 OK,SCAN PASS,WIP to PACK,LOT-88A READY,QC CLEARED,OP-1000132,MACHINE M-12,TRACE SYNC">
+        <span class="login-trace-tag" data-tag>WO-2405182</span>
+        <span class="login-trace-tag" data-tag>PART-AX-4412</span>
+        <span class="login-trace-tag" data-tag>STN-04 OK</span>
+        <span class="login-trace-tag" data-tag>SCAN PASS</span>
+        <span class="login-trace-tag" data-tag>WIP to PACK</span>
+    </div>
+
+    <button class="icon-button theme-toggle auth-theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme" title="Switch color theme">
+        <i class="bi bi-moon-stars" data-theme-icon aria-hidden="true"></i>
+    </button>
+
+    <main class="auth-page login-page__main">
+        <section class="auth-card login-card">
+            <a class="auth-brand login-brand" href="{% url 'signin' %}">
+                <span>
+                    <strong>Operator Buddy</strong>
+                    <small>Sign in to your workspace</small>
+                </span>
+            </a>
+
+            {% if messages %}
+            <div class="login-alerts" role="alert">
+                {% for message in messages %}
+                <div class="alert alert-{% if 'error' in message.tags %}danger{% elif 'success' in message.tags %}success{% else %}info{% endif %} alert-dismissible fade show login-alert" role="alert">
+                    <i class="bi bi-exclamation-triangle-fill me-2" aria-hidden="true"></i>
+                    <span>{{ message }}</span>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <form class="login-form needs-validation" method="post" action="" novalidate id="loginForm">
+                {% csrf_token %}
+
+                <div class="mb-3">
+                    <label class="form-label" for="username">Username</label>
+                    <div class="input-group login-input-group">
+                        <span class="input-group-text" aria-hidden="true">
+                            <i class="bi bi-person"></i>
+                        </span>
+                        <input class="form-control" id="username" name="username" type="text" value="{{ employee_code|default:'' }}" placeholder="Enter your username" autocomplete="username" required autofocus>
+                        <div class="invalid-feedback">Username is required.</div>
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label" for="password">Password</label>
+                    <div class="input-group login-input-group">
+                        <span class="input-group-text" aria-hidden="true">
+                            <i class="bi bi-lock"></i>
+                        </span>
+                        <input class="form-control" id="password" name="password" type="password" placeholder="Enter your password" autocomplete="current-password" required>
+                        <button class="btn btn-outline-secondary login-toggle-password" type="button" id="togglePassword" aria-label="Show password" aria-pressed="false">
+                            <i class="bi bi-eye" aria-hidden="true"></i>
+                        </button>
+                        <div class="invalid-feedback">Password is required.</div>
+                    </div>
+                </div>
+
+                <button class="btn btn-primary w-100 login-submit" type="submit" id="loginSubmit">
+                    <span class="login-submit__label">
+                        <i class="bi bi-box-arrow-in-right" aria-hidden="true"></i> Log in
+                    </span>
+                    <span class="login-submit__spinner spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                </button>
+            </form>
+
+            <div class="auth-footer login-footer">
+                <span class="text-muted small">Operator Buddy &copy; Traceability</span>
+            </div>
+        </section>
+    </main>
+
+    <script src="{% static 'assets/js/bootstrap.bundle.min.js' %}"></script>
+    <script src="{% static 'assets/js/main.js' %}"></script>
+    <script src="{% static 'internal/js/auth/login.js' %}"></script>
+</body>
+
+</html>

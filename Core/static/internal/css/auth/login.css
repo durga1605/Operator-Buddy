@@ -1,0 +1,326 @@
+/* Full-page shopfloor traceability login */
+
+.login-page {
+    position: relative;
+    overflow: hidden;
+    min-height: 100vh;
+}
+
+.login-page.auth-body {
+    background: #070d1a;
+}
+
+/* ---- Animated background layers ---- */
+.login-trace-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    background: radial-gradient(ellipse 120% 80% at 50% 100%, #0c4a6e 0%, transparent 55%),
+        radial-gradient(ellipse 80% 60% at 0% 50%, rgba(37, 99, 235, 0.2) 0%, transparent 50%),
+        radial-gradient(ellipse 70% 50% at 100% 20%, rgba(15, 118, 110, 0.18) 0%, transparent 45%),
+        linear-gradient(180deg, #030712 0%, #0f172a 45%, #0b1120 100%);
+}
+
+.login-trace-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    /* Sizing via CSS only (no inline styles) for CSP style-src 'self' */
+}
+
+.login-trace-grid {
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(rgba(56, 189, 248, 0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(56, 189, 248, 0.06) 1px, transparent 1px);
+    background-size: 48px 48px;
+    animation: loginGridDrift 24s linear infinite;
+    mask-image: radial-gradient(ellipse 90% 80% at 50% 50%, black 20%, transparent 75%);
+}
+
+@keyframes loginGridDrift {
+    0% {
+        transform: translate(0, 0);
+    }
+
+    100% {
+        transform: translate(48px, 48px);
+    }
+}
+
+.login-trace-scan {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg,
+            transparent 0%,
+            rgba(56, 189, 248, 0.15) 20%,
+            rgba(56, 189, 248, 0.85) 50%,
+            rgba(56, 189, 248, 0.15) 80%,
+            transparent 100%);
+    box-shadow: 0 0 24px 4px rgba(56, 189, 248, 0.35);
+    animation: loginScanSweep 5s ease-in-out infinite;
+    opacity: 0.7;
+}
+
+@keyframes loginScanSweep {
+
+    0%,
+    100% {
+        top: 8%;
+        opacity: 0.35;
+    }
+
+    50% {
+        top: 92%;
+        opacity: 0.85;
+    }
+}
+
+.login-trace-glow {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.35;
+    animation: loginGlowPulse 8s ease-in-out infinite;
+}
+
+.login-trace-glow--1 {
+    width: 420px;
+    height: 420px;
+    top: -10%;
+    left: -5%;
+    background: #2563eb;
+}
+
+.login-trace-glow--2 {
+    width: 360px;
+    height: 360px;
+    bottom: -15%;
+    right: -5%;
+    background: #0d9488;
+    animation-delay: -4s;
+}
+
+@keyframes loginGlowPulse {
+
+    0%,
+    100% {
+        transform: scale(1);
+        opacity: 0.25;
+    }
+
+    50% {
+        transform: scale(1.15);
+        opacity: 0.45;
+    }
+}
+
+/* Floating HUD tags (shopfloor data) */
+.login-trace-hud {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    overflow: hidden;
+}
+
+.login-trace-tag {
+    position: absolute;
+    font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: rgba(125, 211, 252, 0.55);
+    padding: 0.25rem 0.55rem;
+    border: 1px solid rgba(56, 189, 248, 0.2);
+    border-radius: 4px;
+    background: rgba(15, 23, 42, 0.45);
+    white-space: nowrap;
+    animation: loginTagFloat 12s ease-in-out infinite;
+    opacity: 0;
+}
+
+.login-trace-tag:nth-child(1) {
+    top: 12%;
+    left: 8%;
+    animation-delay: 0s;
+}
+
+.login-trace-tag:nth-child(2) {
+    top: 22%;
+    right: 10%;
+    animation-delay: -2.4s;
+}
+
+.login-trace-tag:nth-child(3) {
+    bottom: 28%;
+    left: 12%;
+    animation-delay: -5s;
+}
+
+.login-trace-tag:nth-child(4) {
+    bottom: 18%;
+    right: 14%;
+    animation-delay: -7.5s;
+}
+
+.login-trace-tag:nth-child(5) {
+    top: 48%;
+    left: 5%;
+    animation-delay: -10s;
+}
+
+@keyframes loginTagFloat {
+
+    0%,
+    100% {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+
+    15%,
+    55% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+
+    70% {
+        opacity: 0.4;
+        transform: translateY(-4px);
+    }
+}
+
+/* ---- Login card (centered) ---- */
+.login-page__main {
+    position: relative;
+    z-index: 2;
+    padding: 1.25rem;
+    width: 100%;
+    min-height: 100vh;
+}
+
+.login-page .auth-page {
+    min-height: calc(100vh - 2.5rem);
+}
+
+.login-card {
+    width: min(100%, 420px);
+    margin: 0 auto;
+    padding: clamp(1.5rem, 4vw, 2rem);
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    background: rgba(255, 255, 255, 0.94);
+    backdrop-filter: blur(16px);
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+}
+
+.login-brand {
+    margin-bottom: 1.25rem;
+}
+
+.login-form__intro .eyebrow {
+    color: #2563eb;
+}
+
+.login-alerts {
+    margin-bottom: 1rem;
+}
+
+.login-alert {
+    display: flex;
+    align-items: center;
+    font-size: 0.9rem;
+}
+
+.login-input-group .input-group-text {
+    background: #f8fafc;
+    border-color: var(--admin-border);
+    color: var(--admin-muted);
+}
+
+.login-input-group .form-control:focus {
+    border-color: var(--admin-primary);
+    box-shadow: 0 0 0 0.2rem rgba(37, 99, 235, 0.15);
+}
+
+.login-toggle-password {
+    border-color: var(--admin-border);
+    color: var(--admin-muted);
+}
+
+.login-submit {
+    min-height: 46px;
+    font-weight: 600;
+}
+
+.login-submit:not(:disabled):hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(37, 99, 235, 0.35);
+}
+
+.login-footer {
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--admin-border);
+    text-align: center;
+}
+
+.auth-theme-toggle {
+    z-index: 10;
+}
+
+/* Dark theme */
+html[data-theme="dark"] .login-page.auth-body {
+    background: #030712;
+}
+
+html[data-theme="dark"] .login-card {
+    background: rgba(15, 23, 42, 0.92);
+    border-color: rgba(71, 85, 105, 0.5);
+}
+
+html[data-theme="dark"] .login-input-group .input-group-text {
+    background: #1e293b;
+}
+
+html[data-theme="dark"] .login-trace-tag {
+    color: rgba(125, 211, 252, 0.7);
+    background: rgba(15, 23, 42, 0.75);
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+
+    .login-trace-grid,
+    .login-trace-scan,
+    .login-trace-glow,
+    .login-trace-tag {
+        animation: none !important;
+    }
+
+    .login-trace-scan {
+        top: 50%;
+        opacity: 0.4;
+    }
+
+    .login-trace-tag {
+        opacity: 0.5;
+    }
+}
+
+@media (max-width: 575.98px) {
+    .login-trace-tag {
+        font-size: 0.62rem;
+        display: none;
+    }
+
+    .login-trace-tag:nth-child(1),
+    .login-trace-tag:nth-child(2) {
+        display: block;
+    }
+}

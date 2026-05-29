@@ -1,0 +1,36 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  {% include 'layouts/head.html' %}
+</head>
+
+<body>
+  <div class="admin-shell">
+    <div class="sidebar-backdrop" data-sidebar-close></div>
+
+    <aside class="admin-sidebar" id="adminSidebar" aria-label="Main navigation">
+      {% include 'layouts/navbar.html' %}
+    </aside>
+
+    <div class="admin-main">
+      <nav class="navbar admin-navbar navbar-expand bg-white">
+        {% include 'layouts/header.html' %}
+      </nav>
+
+      <main class="dashboard-content">
+        <div class="container-fluid px-3 px-lg-4 py-4">
+          {% block body %}
+
+          {% endblock body %}
+        </div>
+      </main>
+    </div>
+  </div>
+
+  {% include 'layouts/scripts.html' %}
+</body>
+
+</html>

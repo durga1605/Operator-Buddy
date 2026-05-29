@@ -1,8 +1,5 @@
 """
 Django settings for the Traceability project.
-
-This file contains configuration for installed apps, middleware, templates, static files,
-database, authentication, internationalization, and security settings.
 """
 
 from pathlib import Path
@@ -29,6 +26,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "Core",
+    "csp",
 ]
 
 MIDDLEWARE = [
@@ -36,10 +34,28 @@ MIDDLEWARE = [
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
+    "csp.middleware.CSPMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
+# Content-Security-Policy (always enforced; admin uses relaxed inline rules)
+CSP_ENABLED = True
+CSP_HEADER_NAME = "Content-Security-Policy"
+
+CONTENT_SECURITY_POLICY = {
+    "DIRECTIVES": {
+        "base-uri": ["'self'"],
+        "connect-src": ["'self'"],
+        "default-src": ["'self'"],
+        "frame-src": ["'self'"],
+        "img-src": ["'self'", "data:"],
+        "object-src": ["'none'"],
+        "script-src": ["'self'"],
+        "style-src": ["'self'"],
+    }
+}
 
 ROOT_URLCONF = "Config.urls"
 
@@ -53,14 +69,13 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
-                "Core.views.context_processors.employee_name",
-                "Core.views.context_processors.user_role",
+                "Core.components.context_processors.employee_name",
+                "Core.components.context_processors.user_role",
             ],
         },
     },
 ]
 
-WSGI_APPLICATION = "Config.wsgi.application"
 SESSION_ENGINE = "django.contrib.sessions.backends.file"
 
 # Database
@@ -115,7 +130,8 @@ VVP_DB = config("VVP_DB")
 PPM_DB = config("PPM_DB")
 
 KPM_DB = config("KPM_DB")
-
+SFQA_BAPI = config("SFQA_BAPI")
+SFQA_BAPI_CLIENT = config("SFQA_BAPI_CLIENT")
 # Decrypt
 fernet = Fernet(SECRET_KEY.encode())
 PASSWORD = fernet.decrypt(PASSWORD_ENCRYPTED.encode()).decode()
@@ -129,8 +145,14 @@ USE_I18N = True
 USE_TZ = True
 
 
-STATIC_URL = "/static_files/"
-STATIC_ROOT = f"{BASE_DIR}/static_files/"
+STATIC_URL = "/static/"
+
+STATICFILES_DIRS = [
+    BASE_DIR / "Core" / "static",
+]
+
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
 MEDIA_URL = "/media/"
 MEDIA_ROOT = f"{BASE_DIR}/media/"
 
