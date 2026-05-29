@@ -26,7 +26,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "Core",
-    "csp",
+    # "csp",
 ]
 
 MIDDLEWARE = [
@@ -34,7 +34,7 @@ MIDDLEWARE = [
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
-    "csp.middleware.CSPMiddleware",
+    # "csp.middleware.CSPMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -53,7 +53,7 @@ CONTENT_SECURITY_POLICY = {
         "img-src": ["'self'", "data:"],
         "object-src": ["'none'"],
         "script-src": ["'self'"],
-        "style-src": ["'self'"],
+        "style-src": ["'self'", "https://fonts.googleapis.com"],
     }
 }
 

@@ -1,13 +1,11 @@
 "use strict";
 
 /**
- * WIP start/complete — barcode scan workflow.
- * Auto-advances on scanner input (fast burst + idle) or Enter suffix.
+ * WIP flow: Work Order → SAP details → Operator → Machine + Process → Start → Submit
  */
 
 (function () {
-  var SCAN_IDLE_MS = 120;
-  var SCAN_MAX_DURATION_MS = 600;
+  var SCAN_IDLE_MS = 80;
   var MIN_SCAN_LENGTH = 1;
 
   function onReady(fn) {
@@ -27,34 +25,27 @@
     return match ? decodeURIComponent(match[1]) : null;
   }
 
-  function setStatus(message, type) {
-    var el = document.getElementById("wip-scan-status");
-    if (!el) {
-      return;
+  function getCsrfToken() {
+    var input = document.querySelector('input[name="csrfmiddlewaretoken"]');
+    if (input && input.value) {
+      return input.value;
     }
-    el.textContent = message || "";
-    el.classList.remove("is-success", "is-error");
-    if (type === "success") {
-      el.classList.add("is-success");
-    } else if (type === "error") {
-      el.classList.add("is-error");
-    }
+    return getCookie("csrftoken") || "";
   }
 
   function postJson(url, payload) {
     return fetch(url, {
       method: "POST",
+      credentials: "same-origin",
       headers: {
         "Content-Type": "application/json",
-        "X-CSRFToken": getCookie("csrftoken") || "",
+        "X-CSRFToken": getCsrfToken(),
       },
       body: JSON.stringify(payload),
     }).then(function (response) {
       return response.json().then(function (data) {
         if (!response.ok) {
-          var err = new Error(data.error || "Request failed");
-          err.payload = data;
-          throw err;
+          throw new Error(data.error || "Request failed");
         }
         return data;
       });
@@ -62,12 +53,13 @@
   }
 
   /**
-   * Bind barcode-style auto-submit: Enter and rapid scan idle detection.
+   * Auto-commit scan fields after brief idle (no Enter required).
+   * Scanners that suffix Enter still work via keydown handler.
    */
   function attachBarcodeScanner(input, onScan) {
     var idleTimer = null;
-    var firstKeyTime = 0;
     var busy = false;
+    var lastCommitted = "";
 
     function clearIdleTimer() {
       if (idleTimer) {
@@ -78,34 +70,27 @@
 
     function commit() {
       clearIdleTimer();
-      if (busy || input.disabled) {
+      if (busy || !input || input.disabled) {
         return;
       }
       var value = input.value.trim();
-      if (value.length < MIN_SCAN_LENGTH) {
+      if (value.length < MIN_SCAN_LENGTH || value === lastCommitted) {
         return;
       }
       busy = true;
-      Promise.resolve(onScan(value))
+      lastCommitted = value;
+      Promise.resolve(onScan())
         .catch(function () {
-          /* errors handled in onScan */
+          lastCommitted = "";
         })
         .finally(function () {
           busy = false;
-          firstKeyTime = 0;
         });
     }
 
-    function scheduleIdleCheck() {
+    function scheduleCommit() {
       clearIdleTimer();
-      idleTimer = setTimeout(function () {
-        var duration = Date.now() - firstKeyTime;
-        var len = input.value.trim().length;
-        if (len >= MIN_SCAN_LENGTH && duration <= SCAN_MAX_DURATION_MS) {
-          commit();
-        }
-        firstKeyTime = 0;
-      }, SCAN_IDLE_MS);
+      idleTimer = setTimeout(commit, SCAN_IDLE_MS);
     }
 
     input.addEventListener("keydown", function (event) {
@@ -114,24 +99,30 @@
         commit();
         return;
       }
-      if (!firstKeyTime) {
-        firstKeyTime = Date.now();
-      }
+      scheduleCommit();
     });
 
-    input.addEventListener("input", function () {
-      if (!firstKeyTime) {
-        firstKeyTime = Date.now();
+    input.addEventListener("input", scheduleCommit);
+
+    input.addEventListener("keyup", function (event) {
+      if (event.key === "Enter") {
+        return;
       }
-      scheduleIdleCheck();
+      scheduleCommit();
+    });
+
+    input.addEventListener("paste", function () {
+      scheduleCommit();
     });
 
     input.addEventListener("focus", function () {
       input.classList.add("wip-scan-input--active");
+      lastCommitted = "";
     });
 
     input.addEventListener("blur", function () {
       input.classList.remove("wip-scan-input--active");
+      clearIdleTimer();
     });
   }
 
@@ -142,21 +133,22 @@
     }
 
     var urls = {
-      part: form.getAttribute("data-url-part"),
-      operator: form.getAttribute("data-url-operator"),
-      machine: form.getAttribute("data-url-machine"),
       workOrder: form.getAttribute("data-url-work-order"),
+      operator: form.getAttribute("data-url-operator"),
+      validate: form.getAttribute("data-url-validate"),
       submit: form.getAttribute("data-url-submit"),
     };
 
     var state = {
-      partScanned: false,
-      operatorScanned: false,
-      machineScanned: false,
       woScanned: false,
+      operatorScanned: false,
+      machineValidated: false,
+      processStarted: false,
+      workOrder: "",
       materialCode: "",
       partName: "",
-      sapPlantCode: "",
+      partNo: "",
+      sapLines: [],
       timerInterval: null,
       seconds: 0,
     };
@@ -165,27 +157,66 @@
       return document.getElementById(id);
     }
 
-    function enableField(id, enable) {
+    function setStatus(message, type) {
+      var statusEl = el("wip-scan-status");
+      if (!statusEl) {
+        return;
+      }
+      statusEl.textContent = message || "";
+      statusEl.classList.remove("is-success", "is-error");
+      if (type === "success") {
+        statusEl.classList.add("is-success");
+      } else if (type === "error") {
+        statusEl.classList.add("is-error");
+      }
+    }
+
+    function enableInput(id, enable) {
       var field = el(id);
       if (field) {
         field.disabled = !enable;
       }
     }
 
-    function focusField(id) {
+    function focusInput(id) {
       var field = el(id);
       if (field && !field.disabled) {
         field.focus();
-        field.select();
+        if (field.select) {
+          field.select();
+        }
       }
     }
 
-    function lockField(id) {
+    function lockInput(id) {
+      enableInput(id, false);
       var field = el(id);
       if (field) {
-        field.disabled = true;
         field.classList.remove("wip-scan-input--active");
       }
+    }
+
+    function activateSection(sectionId) {
+      var section = el(sectionId);
+      if (section) {
+        section.classList.remove("wip-card--disabled");
+        section.classList.add("is-active");
+      }
+    }
+
+    function fillProcessOptions(processes) {
+      var select = el("process_select");
+      if (!select) {
+        return;
+      }
+      select.innerHTML = '<option value="">Select process</option>';
+      (processes || []).forEach(function (name) {
+        var opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = name;
+        select.appendChild(opt);
+      });
+      enableInput("process_select", true);
     }
 
     function startTimer() {
@@ -202,112 +233,9 @@
         var s = String(state.seconds % 60).padStart(2, "0");
         var timerEl = el("timer");
         if (timerEl) {
-          timerEl.textContent = "Timer: " + h + ":" + m + ":" + s;
+          timerEl.textContent = h + ":" + m + ":" + s;
         }
       }, 1000);
-    }
-
-    function scanPartNo() {
-      if (state.partScanned) {
-        return Promise.resolve();
-      }
-      var partNo = el("part_no").value.trim();
-      if (!partNo) {
-        return Promise.resolve();
-      }
-      setStatus("Validating part…", "");
-      return postJson(urls.part, { part_no: partNo })
-        .then(function (data) {
-          if (data.status !== "success") {
-            throw new Error(data.error || "Part scan failed");
-          }
-          state.partScanned = true;
-          state.partName = data.part_name;
-          state.materialCode = data.material_code;
-          state.sapPlantCode = data.sap_plant_code;
-          lockField("part_no");
-          enableField("operator_id", true);
-          setStatus("Part OK — scan operator", "success");
-          focusField("operator_id");
-        })
-        .catch(function (err) {
-          setStatus(err.message || "Part not found", "error");
-          focusField("part_no");
-          throw err;
-        });
-    }
-
-    function scanOperator() {
-      if (state.operatorScanned) {
-        return Promise.resolve();
-      }
-      var opId = el("operator_id").value.trim();
-      if (!opId) {
-        return Promise.resolve();
-      }
-      setStatus("Validating operator…", "");
-      return postJson(urls.operator, { operator_id: opId })
-        .then(function (data) {
-          if (data.status !== "success") {
-            throw new Error(data.error || "Operator scan failed");
-          }
-          state.operatorScanned = true;
-          lockField("operator_id");
-          enableField("machine_id", true);
-          setStatus("Operator OK — scan machine", "success");
-          focusField("machine_id");
-        })
-        .catch(function (err) {
-          setStatus(err.message || "Operator invalid", "error");
-          focusField("operator_id");
-          throw err;
-        });
-    }
-
-    function scanMachine() {
-      if (state.machineScanned) {
-        return Promise.resolve();
-      }
-      var machineId = el("machine_id").value.trim();
-      if (!machineId) {
-        return Promise.resolve();
-      }
-      setStatus("Validating machine…", "");
-      return postJson(urls.machine, {
-        machine_id: machineId,
-        part_name: state.partName,
-      })
-        .then(function (data) {
-          if (data.status !== "success") {
-            throw new Error(data.error || "Machine scan failed");
-          }
-          state.machineScanned = true;
-          lockField("machine_id");
-
-          var procSelect = el("process_select");
-          procSelect.innerHTML = '<option value="">Select Process</option>';
-          (data.process_list || []).forEach(function (processName) {
-            var opt = document.createElement("option");
-            opt.value = processName;
-            opt.textContent = processName;
-            procSelect.appendChild(opt);
-          });
-
-          enableField("process_select", true);
-          enableField("work_order", true);
-
-          if (data.process_list && data.process_list.length === 1) {
-            procSelect.value = data.process_list[0];
-          }
-
-          setStatus("Machine OK — scan work order", "success");
-          focusField("work_order");
-        })
-        .catch(function (err) {
-          setStatus(err.message || "Machine invalid", "error");
-          focusField("machine_id");
-          throw err;
-        });
     }
 
     function scanWorkOrder() {
@@ -318,92 +246,220 @@
       if (!wo) {
         return Promise.resolve();
       }
-      setStatus("Validating work order…", "");
-      return postJson(urls.workOrder, {
-        work_order: wo,
-        material_code: state.materialCode,
-        part_name: state.partName,
-      })
+      setStatus("Fetching from SAP…", "");
+      return postJson(urls.workOrder, { work_order: wo })
         .then(function (data) {
-          if (data.status !== "success") {
-            throw new Error(data.error || "Work order scan failed");
-          }
           state.woScanned = true;
-          lockField("work_order");
-          var woDisplay = String(data.woqty);
-          if (data.remaining_qty !== undefined) {
-            woDisplay += " (remaining: " + data.remaining_qty + ")";
-          }
-          el("woqty").value = woDisplay;
-          enableField("production_count", true);
-          enableField("rejected_count", true);
-          enableField("submit-btn", true);
-          startTimer();
-          setStatus("Work order OK — enter counts", "success");
-          focusField("production_count");
+          state.workOrder = data.work_order;
+          state.materialCode = data.material_code || "";
+          state.partName = data.part_name || "";
+          state.partNo = data.part_no || data.material_code || "";
+          state.sapLines = data.sap_lines || [];
+
+          lockInput("work_order");
+          el("display_part_no").textContent = state.partNo || "—";
+          el("display_woqty").textContent = String(data.woqty ?? "—");
+          el("wo-info-panel").classList.remove("d-none");
+
+          fillProcessOptions(data.processes || []);
+          activateSection("step-operator");
+          enableInput("operator_id", true);
+
+          setStatus("WO OK — scan operator", "success");
+          focusInput("operator_id");
         })
         .catch(function (err) {
           state.woScanned = false;
-          enableField("work_order", true);
-          var woField = el("work_order");
-          if (woField) {
-            woField.disabled = false;
-            woField.value = "";
-          }
-          setStatus(err.message || "Work order invalid", "error");
-          focusField("work_order");
+          enableInput("work_order", true);
+          el("work_order").value = "";
+          setStatus(err.message, "error");
+          focusInput("work_order");
           throw err;
         });
     }
 
-    attachBarcodeScanner(el("part_no"), scanPartNo);
-    attachBarcodeScanner(el("operator_id"), scanOperator);
-    attachBarcodeScanner(el("machine_id"), scanMachine);
+    function scanOperator() {
+      if (!state.woScanned || state.operatorScanned) {
+        return Promise.resolve();
+      }
+      var opId = el("operator_id").value.trim();
+      if (!opId) {
+        return Promise.resolve();
+      }
+      setStatus("Checking operator…", "");
+      return postJson(urls.operator, { operator_id: opId })
+        .then(function () {
+          state.operatorScanned = true;
+          lockInput("operator_id");
+          activateSection("step-machine");
+          enableInput("machine_id", true);
+          setStatus("Operator OK — scan machine & pick process", "success");
+          focusInput("machine_id");
+        })
+        .catch(function (err) {
+          setStatus(err.message, "error");
+          focusInput("operator_id");
+          throw err;
+        });
+    }
+
+    function validateMachineProcess() {
+      if (!state.operatorScanned || state.machineValidated) {
+        return Promise.resolve();
+      }
+      var machineId = el("machine_id").value.trim();
+      var processName = el("process_select").value.trim();
+      if (!machineId) {
+        return Promise.resolve();
+      }
+      if (!processName) {
+        setStatus("Select process first", "error");
+        focusInput("process_select");
+        return Promise.resolve();
+      }
+
+      setStatus("Validating machine & process…", "");
+      return postJson(urls.validate, {
+        work_order: state.workOrder,
+        machine_id: machineId,
+        process_name: processName,
+      })
+        .then(function () {
+          state.machineValidated = true;
+          lockInput("machine_id");
+          enableInput("process_select", false);
+          activateSection("step-production");
+          enableInput("start-btn", true);
+          setStatus("Valid — press Start", "success");
+          focusInput("start-btn");
+        })
+        .catch(function (err) {
+          state.machineValidated = false;
+          enableInput("start-btn", false);
+          enableInput("production_count", false);
+          enableInput("rejected_count", false);
+          enableInput("submit-btn", false);
+          setStatus(err.message, "error");
+          if (err.message && err.message.indexOf("SAP") !== -1) {
+            focusInput("process_select");
+          } else if (err.message && err.message.indexOf("completed") !== -1) {
+            el("machine_id").value = "";
+            focusInput("machine_id");
+          } else {
+            focusInput("machine_id");
+          }
+          throw err;
+        });
+    }
+
+    function onMachineScanned() {
+      if (!state.operatorScanned || state.machineValidated) {
+        return Promise.resolve();
+      }
+      var machineId = el("machine_id").value.trim();
+      if (!machineId) {
+        return Promise.resolve();
+      }
+      var processName = el("process_select").value.trim();
+      if (!processName) {
+        setStatus("Select process", "");
+        focusInput("process_select");
+        return Promise.resolve();
+      }
+      return validateMachineProcess();
+    }
+
     attachBarcodeScanner(el("work_order"), scanWorkOrder);
+    attachBarcodeScanner(el("operator_id"), scanOperator);
+    attachBarcodeScanner(el("machine_id"), onMachineScanned);
 
     el("process_select").addEventListener("change", function () {
-      if (state.machineScanned && !state.woScanned) {
-        focusField("work_order");
-      }
+      state.machineValidated = false;
+      enableInput("start-btn", false);
+      enableInput("production_count", false);
+      enableInput("rejected_count", false);
+      enableInput("submit-btn", false);
+      onMachineScanned();
     });
 
-    el("production_count").addEventListener("keydown", function (event) {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        focusField("rejected_count");
+    el("start-btn").addEventListener("click", function () {
+      if (!state.machineValidated || state.processStarted) {
+        return;
       }
+      state.processStarted = true;
+      enableInput("start-btn", false);
+      enableInput("production_count", true);
+      enableInput("rejected_count", true);
+      enableInput("submit-btn", true);
+      startTimer();
+      setStatus("Timer running — enter counts", "success");
+      focusInput("production_count");
     });
+
+    function attachNumericAdvance(input, nextId) {
+      if (!input) {
+        return;
+      }
+      var idleTimer = null;
+      function goNext() {
+        if (input.disabled || !input.value.trim()) {
+          return;
+        }
+        focusInput(nextId);
+      }
+      function schedule() {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(goNext, SCAN_IDLE_MS);
+      }
+      input.addEventListener("keydown", function (event) {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          goNext();
+        }
+      });
+      input.addEventListener("input", schedule);
+      input.addEventListener("keyup", function (event) {
+        if (event.key !== "Enter") {
+          schedule();
+        }
+      });
+    }
+
+    attachNumericAdvance(el("production_count"), "rejected_count");
 
     form.addEventListener("submit", function (event) {
       event.preventDefault();
-      if (!state.woScanned) {
+      if (!state.processStarted) {
+        setStatus("Press Start first", "error");
         return;
       }
       setStatus("Submitting…", "");
-      enableField("submit-btn", false);
+      enableInput("submit-btn", false);
 
       postJson(urls.submit, {
+        work_order: state.workOrder,
         operator_id: el("operator_id").value,
         machine_id: el("machine_id").value,
-        work_order: el("work_order").value,
+        process_name: el("process_select").value,
         material_code: state.materialCode,
         part_name: state.partName,
         production_count: el("production_count").value,
         rejected_count: el("rejected_count").value,
+        process_started: true,
       })
         .then(function (data) {
-          window.alert(data.message || data.error || "Done");
+          window.alert(data.message || "Saved");
           if (data.status === "success") {
             window.location.reload();
           }
         })
         .catch(function (err) {
-          setStatus(err.message || "Submit failed", "error");
-          enableField("submit-btn", true);
+          setStatus(err.message, "error");
+          enableInput("submit-btn", true);
         });
     });
 
-    focusField("part_no");
-    setStatus("Ready — scan part number", "");
+    focusInput("work_order");
+    setStatus("Scan work order", "");
   });
 })();

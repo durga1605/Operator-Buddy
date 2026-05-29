@@ -10,6 +10,7 @@ import requests
 from Config import settings
 from django.http import JsonResponse
 from django.conf import settings
+from pyrfc import Connection
 
 
 def call_bapi(bapi, params):

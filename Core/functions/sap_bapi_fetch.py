@@ -17,6 +17,8 @@ def fetch_process_details(work_order, sap_plant_code):
             "LV_FLAG": "Q",
         }
         bapi_response = call_bapi("ZPP_FM_MATWORKCENTER_DET", bapi_params)
+
+        print("bapi_response:", bapi_response)
         if not isinstance(bapi_response, dict):
             return None, False, "Invalid response from BAPI", 0, []
 
@@ -64,6 +66,7 @@ def fetch_process_details(work_order, sap_plant_code):
             }
             for item in process_data
         ]
+        # print("material_plant_list:", material_plant_list)
 
         process_result = [
             {
@@ -81,7 +84,7 @@ def fetch_process_details(work_order, sap_plant_code):
             }
             for item in process_data
         ]
-
+        # print("process_result:", process_result)
         return (
             process_result,
             bapi_response.get("status", "unknown"),

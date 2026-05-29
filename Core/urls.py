@@ -16,10 +16,14 @@ urlpatterns = [
     path("mobility/", home.home_page, name="mobility"),
     path("plant_selection/", select_plant.plant_selection, name="plant_selection"),
     path("wip/", start_process.wip_scan_page, name="wip_scan_page"),
-    path("wip/scan-part/", start_process.scan_part_no, name="scan_part_no"),
     path("wip/scan-operator/", start_process.scan_operator, name="scan_operator"),
-    path("wip/scan-machine/", start_process.scan_machine, name="scan_machine"),
     path("wip/scan-work-order/", start_process.scan_work_order, name="scan_work_order"),
+    path(
+        "wip/validate-machine-process/",
+        start_process.validate_machine_process,
+        name="validate_machine_process",
+    ),
+    path("wip/scan-machine/", start_process.scan_machine, name="scan_machine"),
     path("wip/submit/", start_process.submit_production, name="submit_production"),
 ]
 if settings.DEBUG:

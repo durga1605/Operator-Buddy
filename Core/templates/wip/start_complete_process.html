@@ -3,64 +3,75 @@
 {% block body %}
 <link rel="stylesheet" href="{% static 'internal/css/wip/start_complete_process.css' %}">
 
-<div class="container mt-4 wip-scan-page">
-    <h4 class="mb-3">WIP Start/Complete Process</h4>
+<div class="wip-scan-page">
+    <header class="wip-scan-header">
+        <h1 class="wip-scan-title">WIP Process</h1>
+        <p class="wip-scan-sub">Scan work order first</p>
+    </header>
 
     {% if error %}
-    <div class="alert alert-danger" role="alert">{{ error }}</div>
+    <div class="alert alert-danger wip-alert" role="alert">{{ error }}</div>
     {% endif %}
 
-    <form id="wip-form" class="wip-scan-form" novalidate data-url-part="{% url 'scan_part_no' %}" data-url-operator="{% url 'scan_operator' %}" data-url-machine="{% url 'scan_machine' %}" data-url-work-order="{% url 'scan_work_order' %}" data-url-submit="{% url 'submit_production' %}">
+    <form id="wip-form" class="wip-scan-form" novalidate data-url-work-order="{% url 'scan_work_order' %}" data-url-operator="{% url 'scan_operator' %}" data-url-validate="{% url 'validate_machine_process' %}" data-url-submit="{% url 'submit_production' %}">
+        {% csrf_token %}
 
-        <div class="row mb-3">
-            <div class="col-md-4">
-                <label for="part_no" class="form-label fw-medium">Scan Part No</label>
-                <input type="text" class="form-control wip-scan-input" id="part_no" name="part_no" placeholder="Scan Part No" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="none" data-scan-step="part" required autofocus>
-            </div>
-            <div class="col-md-4">
-                <label for="operator_id" class="form-label fw-medium">Scan Operator ID</label>
-                <input type="text" class="form-control wip-scan-input" id="operator_id" name="operator_id" placeholder="Scan Operator ID" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="none" data-scan-step="operator" disabled required>
-            </div>
-            <div class="col-md-4">
-                <label for="machine_id" class="form-label fw-medium">Scan Machine ID</label>
-                <input type="text" class="form-control wip-scan-input" id="machine_id" name="machine_id" placeholder="Scan Machine ID" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="none" data-scan-step="machine" disabled required>
-            </div>
-        </div>
+        <section class="wip-card">
+            <label for="work_order" class="wip-label">Scan Work Order</label>
+            <input type="text" class="form-control form-control-lg wip-scan-input" id="work_order" name="work_order" placeholder="Scan work order" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="none" autofocus required>
 
-        <div class="row mb-3">
-            <div class="col-md-4">
-                <label for="process_select" class="form-label fw-medium">Process</label>
-                <select class="form-select" id="process_select" name="process_selected" disabled required>
-                    <option value="">Select Process</option>
-                </select>
+            <div class="wip-info-grid d-none" id="wo-info-panel">
+                <div>
+                    <span class="wip-info-label">Material / Part</span>
+                    <strong id="display_part_no" class="wip-info-value">—</strong>
+                </div>
+                <div>
+                    <span class="wip-info-label">WO Quantity</span>
+                    <strong id="display_woqty" class="wip-info-value">—</strong>
+                </div>
             </div>
-            <div class="col-md-4">
-                <label for="work_order" class="form-label fw-medium">Scan Work Order</label>
-                <input type="text" class="form-control wip-scan-input" id="work_order" name="work_order" placeholder="Scan Work Order" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="none" data-scan-step="work_order" disabled required>
-            </div>
-            <div class="col-md-4">
-                <label class="form-label fw-medium" for="woqty">WO Quantity</label>
-                <input type="text" class="form-control" id="woqty" name="woqty" readonly tabindex="-1">
-            </div>
-        </div>
+        </section>
 
-        <div class="row mb-3">
-            <div class="col-md-6">
-                <label for="production_count" class="form-label fw-medium">Production Count</label>
-                <input type="number" class="form-control" id="production_count" name="production_count" placeholder="Enter Production Count" disabled min="0" inputmode="numeric">
-            </div>
-            <div class="col-md-6">
-                <label for="rejected_count" class="form-label fw-medium">Rejection Count</label>
-                <input type="number" class="form-control" id="rejected_count" name="rejected_count" placeholder="Enter Rejection Count" disabled min="0" inputmode="numeric">
-            </div>
-        </div>
+        <section class="wip-card wip-card--disabled" id="step-operator">
+            <label for="operator_id" class="wip-label">Scan Operator ID</label>
+            <input type="text" class="form-control form-control-lg wip-scan-input" id="operator_id" name="operator_id" placeholder="Scan operator" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="none" disabled required>
+        </section>
 
-        <div class="mb-3">
-            <span id="timer" class="badge bg-primary fs-6">Timer: 00:00:00</span>
-            <span id="wip-scan-status" class="badge bg-secondary ms-2 wip-scan-status" aria-live="polite"></span>
-        </div>
+        <section class="wip-card wip-card--disabled" id="step-machine">
+            <label for="machine_id" class="wip-label">Scan Machine ID</label>
+            <input type="text" class="form-control form-control-lg wip-scan-input" id="machine_id" name="machine_id" placeholder="Scan machine" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="none" disabled required>
 
-        <button type="submit" class="btn btn-success" id="submit-btn" disabled>Submit to SAP</button>
+            <label for="process_select" class="wip-label mt-3">Select Process</label>
+            <select class="form-select form-select-lg" id="process_select" name="process_selected" disabled required>
+                <option value="">Select process from SAP</option>
+            </select>
+        </section>
+
+        <section class="wip-card wip-card--disabled" id="step-production">
+            <div class="wip-timer-row">
+                <span id="timer" class="wip-timer">00:00:00</span>
+                <span id="wip-scan-status" class="wip-scan-status" aria-live="polite"></span>
+            </div>
+
+            <button type="button" class="btn btn-primary btn-lg w-100 wip-start-btn" id="start-btn" disabled>
+                <i class="bi bi-play-fill" aria-hidden="true"></i> Start
+            </button>
+
+            <div class="wip-count-grid mt-3">
+                <div>
+                    <label for="production_count" class="wip-label">Production Count</label>
+                    <input type="number" class="form-control form-control-lg" id="production_count" name="production_count" placeholder="0" disabled min="0" inputmode="numeric">
+                </div>
+                <div>
+                    <label for="rejected_count" class="wip-label">Rejection Count</label>
+                    <input type="number" class="form-control form-control-lg" id="rejected_count" name="rejected_count" placeholder="0" disabled min="0" inputmode="numeric">
+                </div>
+            </div>
+        </section>
+
+        <button type="submit" class="btn btn-success btn-lg w-100 wip-submit-btn" id="submit-btn" disabled>
+            Submit to SAP
+        </button>
     </form>
 </div>
 
