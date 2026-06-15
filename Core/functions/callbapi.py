@@ -67,6 +67,4 @@ def call_bapi(bapi, params):
         return {"data": f"Request failed: {req_err}", "status": False}
     except Exception as e:
         logging.critical("Unexpected error: %s\n%s", str(e), traceback.format_exc())
-        return JsonResponse(
-            {"error": "An unexpected server error occurred."}, status=500
-        )
+        return {"data": str(e), "status": False}

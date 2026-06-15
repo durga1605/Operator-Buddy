@@ -13,7 +13,7 @@
     <div class="alert alert-danger wip-alert" role="alert">{{ error }}</div>
     {% endif %}
 
-    <form id="wip-form" class="wip-scan-form" novalidate data-url-work-order="{% url 'scan_work_order' %}" data-url-operator="{% url 'scan_operator' %}" data-url-validate="{% url 'validate_machine_process' %}" data-url-submit="{% url 'submit_production' %}">
+    <form id="wip-form" class="wip-scan-form" novalidate data-url-work-order="{% url 'scan_work_order' %}" data-url-operator="{% url 'scan_operator' %}" data-url-validate="{% url 'validate_machine_process' %}" data-url-submit="{% url 'submit_production' %}" data-url-machine-processes="{% url 'get_machine_processes' %}">
         {% csrf_token %}
 
         <section class="wip-card">
@@ -29,6 +29,14 @@
                     <span class="wip-info-label">WO Quantity</span>
                     <strong id="display_woqty" class="wip-info-value">—</strong>
                 </div>
+                <div class="wip-info-full-width mt-2">
+                    <span class="wip-info-label">IP Description</span>
+                    <div id="display_ip_desc" class="wip-info-value text-muted" style="font-size: 0.85rem;">—</div>
+                </div>
+                <div class="wip-info-full-width mt-2">
+                    <span class="wip-info-label">OP Description</span>
+                    <div id="display_op_desc" class="wip-info-value text-primary" style="font-size: 0.85rem; font-weight: 600;">—</div>
+                </div>
             </div>
         </section>
 
@@ -40,6 +48,11 @@
         <section class="wip-card wip-card--disabled" id="step-machine">
             <label for="machine_id" class="wip-label">Scan Machine ID</label>
             <input type="text" class="form-control form-control-lg wip-scan-input" id="machine_id" name="machine_id" placeholder="Scan machine" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="none" disabled required>
+
+            <label for="alt_bom_select" class="wip-label mt-3">Select ALT BOM (if any)</label>
+            <select class="form-select form-select-lg" id="alt_bom_select" name="alt_bom" disabled>
+                <option value="">Standard BOM</option>
+            </select>
 
             <label for="process_select" class="wip-label mt-3">Select Process</label>
             <select class="form-select form-select-lg" id="process_select" name="process_selected" disabled required>

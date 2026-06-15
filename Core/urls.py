@@ -2,12 +2,13 @@
 URL configuration for Core.
 """
 
-from django.urls import path
-from Core.views import select_plant, home
-from Core.views.wip import start_process
-from Config import settings
 from django.conf.urls.static import static
+from django.urls import path
+
+from Config import settings
 from Core.auth import login
+from Core.views import home, select_plant
+from Core.views.wip import start_process
 
 urlpatterns = [
     path("", login.sign_in, name="signin"),
@@ -22,6 +23,11 @@ urlpatterns = [
         "wip/validate-machine-process/",
         start_process.validate_machine_process,
         name="validate_machine_process",
+    ),
+    path(
+        "wip/get-machine-processes/",
+        start_process.get_machine_processes,
+        name="get_machine_processes",
     ),
     path("wip/scan-machine/", start_process.scan_machine, name="scan_machine"),
     path("wip/submit/", start_process.submit_production, name="submit_production"),

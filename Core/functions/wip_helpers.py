@@ -50,8 +50,11 @@ def get_sap_plant_code(db, plant_code: str) -> str:
 
 def _material_record_from_sap_item(item: Dict[str, Any]) -> Dict[str, Any]:
     """Build material record dict for SAP posting from a BAPI line."""
+    # item may come from raw BAPI data (key: OP_MATERIAL) or
+    # from process_result (key: MATERIAL, already remapped from OP_MATERIAL)
+    op_material = (item.get("OP_MATERIAL") or item.get("MATERIAL") or "").strip()
     return {
-        "MATERIAL": item.get("OP_MATERIAL"),
+        "MATERIAL": op_material,
         "PLANT": item.get("PLANT"),
         "OP_DESCRIPTION": item.get("OP_DESCRIPTION", ""),
         "WOQTY": item.get("WOQTY"),
@@ -81,6 +84,8 @@ def parse_sap_work_order_lines(
                 "completed_in_sap": stock_qty <= 0,
                 "op_material": (item.get("OP_MATERIAL") or "").strip(),
                 "ip_material": (item.get("IP_MATERIAL") or "").strip(),
+                "ip_description": (item.get("IP_DESCRIPTION") or "").strip(),
+                "op_description": (item.get("OP_DESCRIPTION") or "").strip(),
                 "material_record": _material_record_from_sap_item(item),
             }
         )
@@ -92,6 +97,7 @@ def summarize_sap_work_order(
 ) -> Tuple[str, str, float, List[str], List[Dict[str, Any]]]:
     """
     Return material_code, part_no, woqty, unique process names, parsed lines.
+    part_no comes from OP_OLDMATERIAL (fallback: OP_MATERIAL).
     """
     lines = parse_sap_work_order_lines(process_data)
     if not lines:
@@ -99,7 +105,7 @@ def summarize_sap_work_order(
 
     first = process_data[0]
     material_code = (first.get("OP_MATERIAL") or first.get("IP_MATERIAL") or "").strip()
-    part_no = material_code
+    part_no = (first.get("OP_OLDMATERIAL") or material_code).strip()
     stock_values = [line["stock_qty"] for line in lines if line["stock_qty"] > 0]
     woqty = max(stock_values) if stock_values else float(first.get("WOQTY") or 0)
 
@@ -125,18 +131,62 @@ def match_sap_line(
     if not machine_id or not process_description:
         return None
 
+    def normalise(s: str) -> str:
+        """Lower, remove spaces and dashes for fuzzy compare."""
+        return s.lower().replace(" ", "").replace("-", "").replace("_", "")
+
+    proc_norm = normalise(process_description)
+    mach_norm = normalise(machine_id)
+
+    # Pass 1: exact process + exact work_center
     for line in lines:
         if line["process_description"].lower() != process_description.lower():
             continue
         if line["work_center"].strip() == machine_id:
             return line
 
+    # Pass 2: exact process + machine_id contained in work_center
     for line in lines:
         if line["process_description"].lower() != process_description.lower():
             continue
         if machine_id.lower() in line["work_center"].lower():
             return line
 
+    # Pass 3: fuzzy process (normalised) + fuzzy work_center
+    for line in lines:
+        if normalise(line["process_description"]) != proc_norm:
+            continue
+        if normalise(line["work_center"]) == mach_norm:
+            return line
+
+    # Pass 4: fuzzy process + machine contained in work_center (normalised)
+    for line in lines:
+        if normalise(line["process_description"]) != proc_norm:
+            continue
+        if mach_norm in normalise(line["work_center"]):
+            return line
+
+    # Pass 5: SAP returned no work_center — match on process description only.
+    # This BAPI (ZPP_FM_MATWORKCENTER_DET) does not populate IDNRK per row.
+    for line in lines:
+        if not line["work_center"].strip():
+            if line["process_description"].lower() == process_description.lower():
+                return line
+
+    # Pass 6: fuzzy process-only fallback
+    for line in lines:
+        if not line["work_center"].strip():
+            if normalise(line["process_description"]) == proc_norm:
+                return line
+
+    import logging as _logging
+
+    _logging.getLogger(__name__).warning(
+        "match_sap_line MISS | machine=%r process=%r | SAP lines: %s",
+        machine_id,
+        process_description,
+        [(l["work_center"], l["process_description"]) for l in lines],
+    )
     return None
 
 

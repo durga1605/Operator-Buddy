@@ -3,7 +3,6 @@
 from datetime import datetime
 import logging
 from Core.functions.callbapi import call_bapi
-from ..auth.logs import traceability_logs
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,10 @@ def fetch_process_details(work_order, sap_plant_code):
         if not isinstance(bapi_response, dict):
             return None, False, "Invalid response from BAPI", 0, []
 
-        process_data = bapi_response.get("data", {}).get("IT_WOSTK_DET", [])
+        process_data = bapi_response.get("data", {})
+        if not isinstance(process_data, dict):
+            return None, False, str(process_data), 0, []
+        process_data = process_data.get("IT_WOSTK_DET", [])
         logger.debug(
             "Full BAPI response for ZPP_FM_MATWORKCENTER_DET: %s", bapi_response
         )
@@ -81,6 +83,7 @@ def fetch_process_details(work_order, sap_plant_code):
                 "ALT_BOM": item.get("ALT_BOM", ""),
                 "IP_STOCKQTY": item.get("IP_STOCKQTY", 0),
                 "LOT_QTY": item.get("LOT_QTY", 0),
+                "OP_OLDMATERIAL": item.get("OP_OLDMATERIAL", ""),
             }
             for item in process_data
         ]
@@ -98,9 +101,7 @@ def fetch_process_details(work_order, sap_plant_code):
         return None, False, "Invalid value encountered.", 0, []
 
     except Exception as e:
-        traceability_logs(
-            None, 3, f"Error fetching process details for WO {work_order}: {str(e)}"
-        )
+        logger.error("Error fetching process details for WO %s: %s", work_order, e)
         return None, False, str(e), 0, []
 
 
@@ -141,12 +142,12 @@ def post_to_sap_prodent_ot(
                     "TIME": current_time,
                     "WO_ORDER": work_order,
                     "RM_COIL_BATCH": "",
-                    "INP_MAT": material_record.get("IP_MATERIAL"),
-                    "INP_LOC": material_record.get("IP_SLOC"),
+                    "INP_MAT": material_record.get("IP_MATERIAL") or "",
+                    "INP_LOC": material_record.get("IP_SLOC") or "",
                     "INP_BATCH": "",
                     "INP_STK_QTY": float(material_record.get("IP_STOCKQTY", 0) or 0),
-                    "OP_MAT": material_record.get("MATERIAL"),
-                    "ALT_BOM": material_record.get("ALT_BOM"),
+                    "OP_MAT": material_record.get("MATERIAL") or "",
+                    "ALT_BOM": material_record.get("ALT_BOM") or "",
                     "TOOL_CODE": "",
                     "WORK_CENTER": machine_id.strip(),
                     "EMPNO": operator_no,
