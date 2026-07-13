@@ -38,6 +38,23 @@
                     <div id="display_op_desc" class="wip-info-value text-primary" style="font-size: 0.85rem; font-weight: 600;">—</div>
                 </div>
             </div>
+
+            <!-- Partial completion alert — shown when some qty already posted -->
+            <div id="balance-alert" class="d-none mt-3 p-3 rounded" style="background:#fff8e1;border:1px solid #f9a825;" role="alert" aria-live="polite">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <span style="font-size:1.2rem;">⚠️</span>
+                    <span id="balance-alert-text" style="font-size:0.9rem;font-weight:600;color:#5d4037;"></span>
+                </div>
+                <div style="margin-top:6px;">
+                    <div style="background:#e0e0e0;border-radius:4px;height:8px;overflow:hidden;">
+                        <div id="balance-progress-bar" style="height:100%;background:#f9a825;border-radius:4px;transition:width .4s;"></div>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;margin-top:3px;font-size:0.75rem;color:#777;">
+                        <span id="balance-completed-label"></span>
+                        <span id="balance-remaining-label"></span>
+                    </div>
+                </div>
+            </div>
         </section>
 
         <section class="wip-card wip-card--disabled" id="step-operator">

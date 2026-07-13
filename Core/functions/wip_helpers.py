@@ -86,6 +86,7 @@ def parse_sap_work_order_lines(
                 "ip_material": (item.get("IP_MATERIAL") or "").strip(),
                 "ip_description": (item.get("IP_DESCRIPTION") or "").strip(),
                 "op_description": (item.get("OP_DESCRIPTION") or "").strip(),
+                "alt_bom": (item.get("ALT_BOM") or "").strip(),
                 "material_record": _material_record_from_sap_item(item),
             }
         )
@@ -125,59 +126,86 @@ def match_sap_line(
     machine_id: str,
     process_description: str,
 ) -> Optional[Dict[str, Any]]:
-    """Find SAP line matching machine (work center) and process description."""
+    """Find SAP line matching machine (work center) and process description.
+
+    The selected process name may come from PMS_oee_cell which uses IP_DESCRIPTION,
+    while SAP lines store OP_DESCRIPTION as process_description. Both fields are
+    checked so either source matches correctly.
+    """
     machine_id = (machine_id or "").strip()
     process_description = (process_description or "").strip()
     if not machine_id or not process_description:
         return None
 
     def normalise(s: str) -> str:
-        """Lower, remove spaces and dashes for fuzzy compare."""
+        """Lower, collapse spaces/dashes/underscores for fuzzy compare."""
         return s.lower().replace(" ", "").replace("-", "").replace("_", "")
 
     proc_norm = normalise(process_description)
     mach_norm = normalise(machine_id)
 
-    # Pass 1: exact process + exact work_center
+    def _desc_matches_exact(line: Dict[str, Any]) -> bool:
+        """True if process_description matches OP_DESCRIPTION or IP_DESCRIPTION (case-insensitive)."""
+        proc_lower = process_description.lower()
+        return (
+            line["process_description"].lower() == proc_lower
+            or line.get("ip_description", "").lower() == proc_lower
+        )
+
+    def _desc_matches_fuzzy(line: Dict[str, Any]) -> bool:
+        """True if normalised process matches either description field."""
+        return (
+            normalise(line["process_description"]) == proc_norm
+            or normalise(line.get("ip_description", "")) == proc_norm
+        )
+
+    # Pass 1: exact process (op or ip desc) + exact work_center
     for line in lines:
-        if line["process_description"].lower() != process_description.lower():
+        if not _desc_matches_exact(line):
             continue
         if line["work_center"].strip() == machine_id:
             return line
 
     # Pass 2: exact process + machine_id contained in work_center
     for line in lines:
-        if line["process_description"].lower() != process_description.lower():
+        if not _desc_matches_exact(line):
             continue
         if machine_id.lower() in line["work_center"].lower():
             return line
 
-    # Pass 3: fuzzy process (normalised) + fuzzy work_center
+    # Pass 3: fuzzy process + exact normalised work_center
     for line in lines:
-        if normalise(line["process_description"]) != proc_norm:
+        if not _desc_matches_fuzzy(line):
             continue
         if normalise(line["work_center"]) == mach_norm:
             return line
 
     # Pass 4: fuzzy process + machine contained in work_center (normalised)
     for line in lines:
-        if normalise(line["process_description"]) != proc_norm:
+        if not _desc_matches_fuzzy(line):
             continue
         if mach_norm in normalise(line["work_center"]):
             return line
 
-    # Pass 5: SAP returned no work_center — match on process description only.
+    # Pass 5: SAP returned no work_center — match on either description only.
     # This BAPI (ZPP_FM_MATWORKCENTER_DET) does not populate IDNRK per row.
     for line in lines:
         if not line["work_center"].strip():
-            if line["process_description"].lower() == process_description.lower():
+            if _desc_matches_exact(line):
                 return line
 
-    # Pass 6: fuzzy process-only fallback
+    # Pass 6: fuzzy process-only fallback (no work_center)
     for line in lines:
         if not line["work_center"].strip():
-            if normalise(line["process_description"]) == proc_norm:
+            if _desc_matches_fuzzy(line):
                 return line
+
+    # Pass 7: last resort — any line whose work_center is empty and there is only
+    # one line (single-operation work order); the user already validated the
+    # process via PMS_oee_cell so accept it.
+    empty_wc_lines = [l for l in lines if not l["work_center"].strip()]
+    if len(empty_wc_lines) == 1:
+        return empty_wc_lines[0]
 
     import logging as _logging
 
@@ -185,7 +213,10 @@ def match_sap_line(
         "match_sap_line MISS | machine=%r process=%r | SAP lines: %s",
         machine_id,
         process_description,
-        [(l["work_center"], l["process_description"]) for l in lines],
+        [
+            (l["work_center"], l["process_description"], l.get("ip_description", ""))
+            for l in lines
+        ],
     )
     return None
 

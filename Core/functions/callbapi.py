@@ -4,13 +4,15 @@ Service module to call SAP BAPI functions via pyrfc with token-based authenticat
 
 import json
 import logging
-from decimal import Decimal
 import traceback
+from decimal import Decimal
+
 import requests
-from Config import settings
-from django.http import JsonResponse
 from django.conf import settings
+from django.http import JsonResponse
 from pyrfc import Connection
+
+from Config import settings
 
 
 def call_bapi(bapi, params):

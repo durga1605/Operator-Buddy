@@ -2,7 +2,6 @@
 
 import json
 import logging
-import re
 from datetime import datetime
 
 from django.http import JsonResponse
@@ -108,7 +107,13 @@ def wip_scan_page(request):
 
 def scan_work_order(request):
     """
-    Scan work order first — fetch material, quantity, and processes from SAP.
+    Scan work order first.
+
+    Priority order:
+    1. IN_PROGRESS record exists  → resume timer, jump to counts
+    2. COMPLETED record exists with remaining balance (per process)
+                                  → pre-fill all fields, jump to counts
+    3. Normal new scan            → SAP fetch, walk through operator/machine/process
     """
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=405)
@@ -126,6 +131,91 @@ def scan_work_order(request):
         return JsonResponse({"error": "Work Order required"}, status=400)
 
     db = get_db_connection(plant_code)
+
+    # ── Priority 1: active IN_PROGRESS ──────────────────────────────
+    in_progress = db["PCB_Trace"].find_one(
+        {"work_order": work_order, "status": "IN_PROGRESS"}
+    )
+    if in_progress:
+        start_time = in_progress.get("start_time") or in_progress.get("timestamp")
+        elapsed_seconds = 0
+        if start_time:
+            elapsed_seconds = max(0, int((datetime.now() - start_time).total_seconds()))
+        return JsonResponse(
+            {
+                "status": "in_progress",
+                "in_progress_data": {
+                    "work_order": in_progress.get("work_order", ""),
+                    "operator_id": in_progress.get("operator_id", ""),
+                    "machine_id": in_progress.get("machine_id", ""),
+                    "process_name": in_progress.get("process_name", ""),
+                    "material_code": in_progress.get("material_code", ""),
+                    "part_no": in_progress.get("part_no", ""),
+                    "woqty": in_progress.get("woqty"),
+                    "elapsed_seconds": elapsed_seconds,
+                },
+            }
+        )
+
+    # ── Priority 2: check for partial COMPLETED (balance remaining) ──
+    # Find the most recent COMPLETED record for this WO.
+    # We group by (machine_id, process_name) and check if any process
+    # still has remaining balance.
+    completed_records = list(
+        db["PCB_Trace"]
+        .find({"work_order": work_order, "status": "COMPLETED"})
+        .sort("timestamp", -1)
+    )
+
+    if completed_records:
+        # Build per-process totals
+        from collections import defaultdict
+
+        process_totals = defaultdict(int)
+        process_last_record = {}
+        for r in completed_records:
+            key = (r.get("machine_id", ""), r.get("process_name", ""))
+            process_totals[key] += int(r.get("production_count", 0) or 0) + int(
+                r.get("rejected_count", 0) or 0
+            )
+            if key not in process_last_record:
+                process_last_record[key] = r  # most recent (sorted desc)
+
+        # Find a process key that still has balance
+        partial_key = None
+        partial_record = None
+        partial_balance = 0
+        for key, last_rec in process_last_record.items():
+            woqty = int(last_rec.get("woqty") or 0)
+            if woqty > 0 and process_totals[key] < woqty:
+                partial_key = key
+                partial_record = last_rec
+                partial_balance = woqty - process_totals[key]
+                break
+
+        if partial_record:
+            # Return partial status — JS will skip all scanning steps
+            woqty = int(partial_record.get("woqty") or 0)
+            completed_qty = process_totals[partial_key]
+            return JsonResponse(
+                {
+                    "status": "partial",
+                    "partial_data": {
+                        "record_id": str(partial_record["_id"]),
+                        "work_order": work_order,
+                        "operator_id": partial_record.get("operator_id", ""),
+                        "machine_id": partial_record.get("machine_id", ""),
+                        "process_name": partial_record.get("process_name", ""),
+                        "material_code": partial_record.get("material_code", ""),
+                        "part_no": partial_record.get("part_no", ""),
+                        "woqty": woqty,
+                        "completed_qty": completed_qty,
+                        "balance_qty": partial_balance,
+                    },
+                }
+            )
+
+    # ── Priority 3: fresh scan — hit SAP ────────────────────────────
     sap_plant_code = get_sap_plant_code(db, plant_code)
     sap_pack, err = _fetch_sap_lines(work_order, sap_plant_code)
     if err:
@@ -284,12 +374,34 @@ def validate_machine_process(request):
             )
 
     if has_pcb_trace_completion(db, work_order, machine_id, process_name):
-        return JsonResponse(
-            {
-                "error": "This work order is already completed. Proceed with next process."
-            },
-            status=400,
+        # Check if there is remaining balance for this specific machine+process
+        proc_records = list(
+            db["PCB_Trace"].find(
+                {
+                    "work_order": work_order,
+                    "machine_id": machine_id,
+                    "process_name": process_name,
+                    "status": "COMPLETED",
+                }
+            )
         )
+        proc_total = sum(
+            int(r.get("production_count", 0) or 0)
+            + int(r.get("rejected_count", 0) or 0)
+            for r in proc_records
+        )
+        # Use woqty stored on the record (original WO qty), not SAP stock_qty
+        ref_woqty = int((proc_records[0].get("woqty") or 0) if proc_records else 0)
+        if ref_woqty <= 0:
+            ref_woqty = int(sap_line.get("stock_qty", 0))
+        balance_qty = max(0, ref_woqty - proc_total)
+        if balance_qty <= 0:
+            return JsonResponse(
+                {
+                    "error": "This work order is already completed. Proceed with next process."
+                },
+                status=400,
+            )
 
     part_doc = find_part_document(db, part_no=part_no, material_code=material_code)
     part_name = part_doc.get("part_name", part_no) if part_doc else part_no
@@ -297,6 +409,26 @@ def validate_machine_process(request):
     request.session["wip_machine_id"] = machine_id
     request.session["wip_process_name"] = process_name
     request.session["wip_alt_bom"] = alt_bom
+
+    # Calculate remaining balance for this specific machine+process
+    proc_records = list(
+        db["PCB_Trace"].find(
+            {
+                "work_order": work_order,
+                "machine_id": machine_id,
+                "process_name": process_name,
+                "status": "COMPLETED",
+            }
+        )
+    )
+    total_completed = sum(
+        int(r.get("production_count", 0) or 0) + int(r.get("rejected_count", 0) or 0)
+        for r in proc_records
+    )
+    ref_woqty = int((proc_records[0].get("woqty") or 0) if proc_records else 0)
+    if ref_woqty <= 0:
+        ref_woqty = int(sap_line.get("stock_qty", 0))
+    balance_qty = max(0, ref_woqty - total_completed)
 
     return JsonResponse(
         {
@@ -307,7 +439,9 @@ def validate_machine_process(request):
             "alt_bom": alt_bom,
             "material_code": material_code,
             "part_name": part_name,
-            "stock_qty": sap_line["stock_qty"],
+            "stock_qty": ref_woqty,
+            "completed_qty": total_completed,
+            "balance_qty": balance_qty,
             "material_record": sap_line["material_record"],
         }
     )
@@ -408,18 +542,12 @@ def submit_production(request):
             return err
 
         result, lines, woqty, _ = sap_pack
-        material_code, part_no, _, _, _ = summarize_sap_work_order(result)
+        material_code, part_no, summary_qty, _, _ = summarize_sap_work_order(result)
+        # Use the SAP WOQTY (original order qty), not IP_STOCKQTY which decreases as qty posts
+        display_woqty = int(summary_qty or woqty or 0)
 
         # Find the specific line for this machine/process to get stock_qty
-        sap_line = next(
-            (
-                l
-                for l in lines
-                if l["work_center"] == machine_id
-                and l["process_description"] == process_name
-            ),
-            None,
-        )
+        sap_line = match_sap_line(lines, machine_id, process_name)
         if not sap_line:
             return JsonResponse(
                 {"error": "Machine/Process not found in SAP lines."}, status=400
@@ -436,8 +564,9 @@ def submit_production(request):
             "part_no": part_no,
             "production_count": 0,
             "rejected_count": 0,
-            "woqty": sap_line.get("stock_qty"),
+            "woqty": display_woqty,
             "status": "IN_PROGRESS",
+            "start_time": now,
             "timestamp": now,
             "shift": determine_shift(now),
             "plant_code": plant_code,
@@ -480,15 +609,12 @@ def submit_production(request):
 
     # Match line with alt_bom if provided
     sap_line = None
-    for line in lines:
-        if match_sap_line([line], machine_id, process_name):
-            if alt_bom:
-                if line.get("alt_bom") == alt_bom:
-                    sap_line = line
-                    break
-            else:
-                sap_line = line
-                break
+    if alt_bom:
+        # Try to find a line matching machine+process+alt_bom first
+        alt_lines = [l for l in lines if l.get("alt_bom") == alt_bom]
+        sap_line = match_sap_line(alt_lines, machine_id, process_name)
+    if not sap_line:
+        sap_line = match_sap_line(lines, machine_id, process_name)
 
     if not sap_line:
         return JsonResponse(
@@ -508,19 +634,32 @@ def submit_production(request):
         )
 
     # Check if we are exceeding remaining quantity
+    # Scope to the specific machine+process for this WO
     query = {
         "work_order": work_order,
         "machine_id": machine_id,
         "process_name": process_name,
         "status": {"$in": ["COMPLETED", "IN_PROGRESS"]},
     }
-    already_posted = list(db["PCB_Trace"].find(query))
+    already_posted = list(db["PCB_Trace"].find(query).sort("timestamp", 1))
     total_posted = sum(
         d.get("production_count", 0) + d.get("rejected_count", 0)
         for d in already_posted
     )
 
-    remaining_qty = sap_line.get("stock_qty", 0) - total_posted
+    # Use woqty from the existing PCB_Trace record if available — it reflects
+    # the original WO quantity, not IP_STOCKQTY which SAP reduces as qty is posted.
+    existing_record = already_posted[0] if already_posted else None
+    woqty_reference = int(existing_record.get("woqty") or 0) if existing_record else 0
+    if woqty_reference <= 0:
+        # No prior record — derive from SAP result (WOQTY / summary_qty)
+        _, _, sap_summary_qty, _, _ = summarize_sap_work_order(result)
+        woqty_reference = int(sap_summary_qty or 0)
+    if woqty_reference <= 0:
+        # Final fallback: IP_STOCKQTY (should rarely reach here)
+        woqty_reference = int(sap_line.get("stock_qty", 0))
+
+    remaining_qty = woqty_reference - total_posted
 
     if (production_count + rejected_count) > remaining_qty:
         return JsonResponse(
@@ -530,8 +669,11 @@ def submit_production(request):
             status=400,
         )
 
-    if has_pcb_trace_completion(db, work_order, machine_id, process_name) and not any(
-        d.get("status") == "IN_PROGRESS" for d in already_posted
+    # Block only if fully completed with no IN_PROGRESS record to update
+    if (
+        has_pcb_trace_completion(db, work_order, machine_id, process_name)
+        and not any(d.get("status") == "IN_PROGRESS" for d in already_posted)
+        and remaining_qty <= 0
     ):
         return JsonResponse(
             {"error": "This work order is already completed."},
@@ -570,6 +712,20 @@ def submit_production(request):
         (d for d in already_posted if d.get("status") == "IN_PROGRESS"), None
     )
 
+    # The most recent COMPLETED record for this WO+machine+process (for partial top-up)
+    last_completed_record = next(
+        (d for d in reversed(already_posted) if d.get("status") == "COMPLETED"), None
+    )
+
+    # Preserve start_time and calculate duration
+    anchor_record = in_progress_record or last_completed_record
+    start_time = None
+    if anchor_record:
+        start_time = anchor_record.get("start_time") or anchor_record.get("timestamp")
+    duration_seconds = None
+    if start_time:
+        duration_seconds = max(0, int((now - start_time).total_seconds()))
+
     doc = {
         "operator_id": operator_id,
         "machine_id": machine_id,
@@ -581,19 +737,48 @@ def submit_production(request):
         "part_no": part_no,
         "production_count": production_count,
         "rejected_count": rejected_count,
-        "woqty": sap_line.get("stock_qty"),
+        "woqty": woqty_reference,
         "status": "COMPLETED",
         "sap_response": sap_response,
+        "start_time": start_time,
+        "end_time": now,
+        "duration_seconds": duration_seconds,
         "timestamp": now,
         "shift": shift,
         "plant_code": plant_code,
     }
 
     if in_progress_record:
-        # Update existing IN_PROGRESS record to COMPLETED
+        # Promote IN_PROGRESS → COMPLETED, accumulate counts
+        doc["production_count"] = (
+            int(in_progress_record.get("production_count", 0) or 0) + production_count
+        )
+        doc["rejected_count"] = (
+            int(in_progress_record.get("rejected_count", 0) or 0) + rejected_count
+        )
         db["PCB_Trace"].replace_one({"_id": in_progress_record["_id"]}, doc)
+    elif last_completed_record:
+        # Partial top-up: accumulate onto existing COMPLETED record (same _id)
+        doc["production_count"] = (
+            int(last_completed_record.get("production_count", 0) or 0)
+            + production_count
+        )
+        doc["rejected_count"] = (
+            int(last_completed_record.get("rejected_count", 0) or 0) + rejected_count
+        )
+        # Preserve the original start_time from the first submission
+        doc["start_time"] = last_completed_record.get(
+            "start_time"
+        ) or last_completed_record.get("timestamp")
+        if doc["start_time"]:
+            doc["duration_seconds"] = max(
+                0, int((now - doc["start_time"]).total_seconds())
+            )
+        db["PCB_Trace"].replace_one({"_id": last_completed_record["_id"]}, doc)
     else:
-        # Create new COMPLETED record
+        # Brand-new submission — no prior record
+        doc["start_time"] = now
+        doc["duration_seconds"] = 0
         db["PCB_Trace"].insert_one(doc)
 
     traceability_logs(
