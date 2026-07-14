@@ -592,6 +592,13 @@ def submit_production(request):
     )
     production_count = int(data.get("production_count", 0) or 0)
     rejected_count = int(data.get("rejected_count", 0) or 0)
+    rejection_details = data.get("rejection_details", [])
+
+    if rejected_count > 0 and not rejection_details:
+        return JsonResponse(
+            {"error": "Rejection reasons required when rejected_count > 0"},
+            status=400,
+        )
 
     if not all([operator_id, machine_id, work_order, process_name]):
         return JsonResponse({"error": "Missing required fields"}, status=400)
@@ -746,6 +753,7 @@ def submit_production(request):
         "timestamp": now,
         "shift": shift,
         "plant_code": plant_code,
+        "rejection_details": rejection_details,
     }
 
     if in_progress_record:
@@ -765,6 +773,10 @@ def submit_production(request):
         )
         doc["rejected_count"] = (
             int(last_completed_record.get("rejected_count", 0) or 0) + rejected_count
+        )
+        # Merge rejection details with existing record
+        doc["rejection_details"] = (
+            last_completed_record.get("rejection_details", []) + rejection_details
         )
         # Preserve the original start_time from the first submission
         doc["start_time"] = last_completed_record.get(

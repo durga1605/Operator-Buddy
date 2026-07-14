@@ -1,7 +1,8 @@
 """Utility functions for fetching work order and process details from BAPI."""
 
-from datetime import datetime
 import logging
+from datetime import datetime
+
 from Core.functions.callbapi import call_bapi
 
 logger = logging.getLogger(__name__)

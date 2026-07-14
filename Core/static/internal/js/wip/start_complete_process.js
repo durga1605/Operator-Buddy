@@ -142,6 +142,7 @@
       timerInterval: null,
       seconds: 0,
       inProgress: false,
+      rejectionDetails: [],
     };
 
     function el(id) {
@@ -655,6 +656,13 @@
         setStatus("Press Start first", "error");
         return;
       }
+
+      var rejectedCount = parseInt(el("rejected_count").value || "0", 10);
+      if (rejectedCount > 0 && state.rejectionDetails.length === 0) {
+        openRejectionModal();
+        return;
+      }
+
       setStatus("Submitting…", "");
       enableInput("submit-btn", false);
 
@@ -668,12 +676,12 @@
         part_name: state.partName,
         production_count: el("production_count").value,
         rejected_count: el("rejected_count").value,
+        rejection_details: state.rejectionDetails,
         process_started: true,
       };
 
       postJson(urls.submit, payload)
         .then(function (data) {
-          /* Stop timer — process is done */
           stopTimer();
           window.alert(data.message || "Saved");
           if (data.status === "success") {
@@ -684,6 +692,106 @@
           setStatus(err.message, "error");
           enableInput("submit-btn", true);
         });
+    });
+
+    /* ── Rejection modal ─────────────────────────────────────── */
+
+    function openRejectionModal() {
+      var rejectedInput = el("rejected_count");
+      if (!rejectedInput) return;
+      var rejectedVal = parseInt(rejectedInput.value || "0", 10);
+      if (isNaN(rejectedVal) || rejectedVal <= 0) return;
+
+      el("modal-rejected-count").textContent = rejectedVal;
+      state.rejectionDetails = [];
+      renderRejectionList();
+      var modal = new bootstrap.Modal(el("rejectionModal"));
+      modal.show();
+      el("rejection-reason").focus();
+    }
+
+    function closeRejectionModal() {
+      var modalEl = el("rejectionModal");
+      if (!modalEl) return;
+      var modal = bootstrap.Modal.getInstance(modalEl);
+      if (modal) modal.hide();
+    }
+
+    function renderRejectionList() {
+      var listEl = el("rejection-list");
+      if (!listEl) return;
+      listEl.innerHTML = "";
+      var total = 0;
+      state.rejectionDetails.forEach(function (item, index) {
+        total += item.count;
+        var div = document.createElement("div");
+        div.className = "rejection-item";
+        div.innerHTML =
+          '<span class="rejection-item-reason">' +
+          item.reason +
+          "</span>" +
+          "<span>" +
+          '<span class="rejection-item-count">' +
+          item.count +
+          "</span>" +
+          '<button type="button" class="rejection-item-remove" data-index="' +
+          index +
+          '" aria-label="Remove">&times;</button>' +
+          "</span>";
+        listEl.appendChild(div);
+      });
+      el("rejection-total").textContent = total;
+    }
+
+    el("rejected_count").addEventListener("input", function () {
+      var val = parseInt(this.value || "0", 10);
+      var modalCountEl = el("modal-rejected-count");
+      if (modalCountEl) modalCountEl.textContent = val;
+      if (val > 0 && !el("rejectionModal").classList.contains("show")) {
+        openRejectionModal();
+      } else if (val <= 0) {
+        state.rejectionDetails = [];
+        renderRejectionList();
+      }
+    });
+
+    el("add-reason-btn").addEventListener("click", function () {
+      var reason = el("rejection-reason").value;
+      var count = parseInt(el("rejection-reason-count").value || "0", 10);
+      if (!reason) {
+        setStatus("Select a reason first", "error");
+        return;
+      }
+      if (isNaN(count) || count <= 0) {
+        setStatus("Enter valid count", "error");
+        return;
+      }
+      var rejectedInput = el("rejected_count");
+      var rejectedVal = parseInt(rejectedInput.value || "0", 10);
+      var currentTotal = state.rejectionDetails.reduce(function (sum, item) {
+        return sum + item.count;
+      }, 0);
+      if (currentTotal + count > rejectedVal) {
+        setStatus("Total exceeds rejected count", "error");
+        return;
+      }
+      state.rejectionDetails.push({ reason: reason, count: count });
+      renderRejectionList();
+      el("rejection-reason").selectedIndex = 0;
+      el("rejection-reason-count").value = "1";
+      el("rejection-reason").focus();
+    });
+
+    el("rejection-list").addEventListener("click", function (e) {
+      if (e.target.classList.contains("rejection-item-remove")) {
+        var index = parseInt(e.target.getAttribute("data-index"), 10);
+        state.rejectionDetails.splice(index, 1);
+        renderRejectionList();
+      }
+    });
+
+    el("save-rejection-btn").addEventListener("click", function () {
+      closeRejectionModal();
     });
 
     /* ── Barcode attachments ────────────────────────────────── */

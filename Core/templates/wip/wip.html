@@ -103,6 +103,39 @@
             Submit to SAP
         </button>
     </form>
+
+    <div class="modal fade" id="rejectionModal" tabindex="-1" aria-labelledby="rejectionModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="rejectionModalLabel">Rejection Reasons</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="mb-2">Rejected Count: <strong id="modal-rejected-count">0</strong></p>
+                    <div class="mb-2">
+                        <label for="rejection-reason" class="form-label">Reason</label>
+                        <select class="form-select" id="rejection-reason">
+                            <option value="">Select Reason</option>
+                            <option value="Damage">Damage</option>
+                            <option value="Misalignment">Misalignment</option>
+                            <option value="Crack">Crack</option>
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <label for="rejection-reason-count" class="form-label">Count</label>
+                        <input type="number" class="form-control" id="rejection-reason-count" min="1" value="1">
+                    </div>
+                    <button type="button" class="btn btn-secondary w-100 mb-3" id="add-reason-btn">Add Reason</button>
+                    <div id="rejection-list"></div>
+                    <div class="mt-2">Total: <strong id="rejection-total">0</strong></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" id="save-rejection-btn">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script src="{% static 'internal/js/wip/start_complete_process.js' %}" defer></script>
