@@ -9,15 +9,13 @@ from django.shortcuts import redirect, render
 
 from Core.auth.logs import traceability_logs
 from Core.components.db_connection_string import get_db_connection
-from Core.functions.sap_bapi_fetch import fetch_process_details, post_to_sap_prodent_ot
-from Core.functions.wip_helpers import (
-    find_part_document,
-    get_sap_plant_code,
-    has_pcb_trace_completion,
-    match_sap_line,
-    parse_sap_work_order_lines,
-    summarize_sap_work_order,
-)
+from Core.functions.sap_bapi_fetch import (fetch_process_details,
+                                           post_to_sap_prodent_ot)
+from Core.functions.wip_helpers import (find_part_document, get_sap_plant_code,
+                                        has_pcb_trace_completion,
+                                        match_sap_line,
+                                        parse_sap_work_order_lines,
+                                        summarize_sap_work_order)
 
 logger = logging.getLogger(__name__)
 
