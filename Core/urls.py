@@ -31,6 +31,7 @@ urlpatterns = [
     ),
     path("wip/scan-machine/", start_process.scan_machine, name="scan_machine"),
     path("wip/submit/", start_process.submit_production, name="submit_production"),
+    path("wip/session-status/", start_process.session_status, name="session_status"),
 ]
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

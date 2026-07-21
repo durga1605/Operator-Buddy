@@ -4,22 +4,70 @@ import json
 import logging
 from datetime import datetime
 
+from bson import ObjectId
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
+from django.views.decorators.http import require_GET
 
 from Core.auth.logs import traceability_logs
 from Core.components.db_connection_string import get_db_connection
-from Core.functions.sap_bapi_fetch import (fetch_process_details,
-                                           post_to_sap_prodent_ot)
-from Core.functions.wip_helpers import (find_part_document, get_sap_plant_code,
-                                        has_pcb_trace_completion,
-                                        match_sap_line,
-                                        parse_sap_work_order_lines,
-                                        summarize_sap_work_order)
+from Core.functions.mtlink_api import fetch_machine_counter, machine_group_name
+from Core.functions.sap_bapi_fetch import fetch_process_details, post_to_sap_prodent_ot
+from Core.functions.wip_helpers import (
+    find_part_document,
+    get_sap_plant_code,
+    has_pcb_trace_completion,
+    match_sap_line,
+    parse_sap_work_order_lines,
+    summarize_sap_work_order,
+)
+from Core.services.machine_poller import (
+    ACTIVE_STATUSES,
+    is_polling,
+    start_machine_poller,
+    stop_machine_poller,
+)
 
 logger = logging.getLogger(__name__)
 
 PLANT_CODES = ["002", "034", "143", "123", "041"]
+
+
+def _find_running_on_machine(db, machine_id: str):
+    """Return active RUNNING/IN_PROGRESS session for machine, if any."""
+    return db["PCB_Trace"].find_one(
+        {"machine_id": machine_id.strip(), "status": {"$in": list(ACTIVE_STATUSES)}}
+    )
+
+
+def _session_public(doc: dict) -> dict:
+    """Serialize session fields for API / WS clients."""
+    if not doc:
+        return {}
+    start_time = doc.get("start_time") or doc.get("timestamp")
+    elapsed = 0
+    if start_time:
+        elapsed = max(0, int((datetime.now() - start_time).total_seconds()))
+    return {
+        "session_id": str(doc.get("_id", "")),
+        "work_order": doc.get("work_order", ""),
+        "operator_id": doc.get("operator_id", ""),
+        "machine_id": doc.get("machine_id", ""),
+        "process_name": doc.get("process_name", ""),
+        "material_code": doc.get("material_code", ""),
+        "part_no": doc.get("part_no", ""),
+        "woqty": doc.get("woqty"),
+        "production_count": int(doc.get("production_count", 0) or 0),
+        "rejected_count": int(doc.get("rejected_count", 0) or 0),
+        "baseline_count": doc.get("baseline_count"),
+        "machine_counter": doc.get("machine_counter"),
+        "status": doc.get("status"),
+        "qty_reached": bool(doc.get("qty_reached")),
+        "sap_posted": bool(doc.get("sap_posted")),
+        "poll_active": bool(doc.get("poll_active", False)),
+        "ws_group": machine_group_name(doc.get("machine_id", "")),
+        "elapsed_seconds": elapsed,
+    }
 
 
 def _parse_json_body(request):
@@ -130,30 +178,36 @@ def scan_work_order(request):
 
     db = get_db_connection(plant_code)
 
-    # ── Priority 1: active IN_PROGRESS ──────────────────────────────
+    # ── Priority 1: active RUNNING / IN_PROGRESS ────────────────────
     in_progress = db["PCB_Trace"].find_one(
-        {"work_order": work_order, "status": "IN_PROGRESS"}
+        {"work_order": work_order, "status": {"$in": list(ACTIVE_STATUSES)}}
     )
     if in_progress:
-        start_time = in_progress.get("start_time") or in_progress.get("timestamp")
-        elapsed_seconds = 0
-        if start_time:
-            elapsed_seconds = max(0, int((datetime.now() - start_time).total_seconds()))
+        # Ensure poller alive for this machine (e.g. after server restart)
+        machine_id = in_progress.get("machine_id", "")
+        session_id = str(in_progress["_id"])
+        if machine_id and not is_polling(machine_id):
+            start_machine_poller(machine_id, plant_code, session_id)
         return JsonResponse(
             {
                 "status": "in_progress",
-                "in_progress_data": {
-                    "work_order": in_progress.get("work_order", ""),
-                    "operator_id": in_progress.get("operator_id", ""),
-                    "machine_id": in_progress.get("machine_id", ""),
-                    "process_name": in_progress.get("process_name", ""),
-                    "material_code": in_progress.get("material_code", ""),
-                    "part_no": in_progress.get("part_no", ""),
-                    "woqty": in_progress.get("woqty"),
-                    "elapsed_seconds": elapsed_seconds,
-                },
+                "in_progress_data": _session_public(in_progress),
             }
         )
+
+    # Qty reached, awaiting SAP submit (machine already released)
+    awaiting_sap = db["PCB_Trace"].find_one(
+        {
+            "work_order": work_order,
+            "status": "COMPLETED",
+            "qty_reached": True,
+            "sap_posted": {"$ne": True},
+        }
+    )
+    if awaiting_sap:
+        data = _session_public(awaiting_sap)
+        data["awaiting_sap"] = True
+        return JsonResponse({"status": "in_progress", "in_progress_data": data})
 
     # ── Priority 2: check for partial COMPLETED (balance remaining) ──
     # Find the most recent COMPLETED record for this WO.
@@ -161,7 +215,17 @@ def scan_work_order(request):
     # still has remaining balance.
     completed_records = list(
         db["PCB_Trace"]
-        .find({"work_order": work_order, "status": "COMPLETED"})
+        .find(
+            {
+                "work_order": work_order,
+                "status": "COMPLETED",
+                "$or": [
+                    {"sap_posted": True},
+                    {"sap_response": {"$exists": True}},
+                    {"qty_reached": {"$ne": True}},
+                ],
+            }
+        )
         .sort("timestamp", -1)
     )
 
@@ -318,13 +382,31 @@ def validate_machine_process(request):
 
     # Check if there is an active process in progress in the database
     in_progress_process = db["PCB_Trace"].find_one(
-        {"work_order": work_order, "status": "IN_PROGRESS"}
+        {"work_order": work_order, "status": {"$in": list(ACTIVE_STATUSES)}}
     )
 
     if in_progress_process:
         return JsonResponse(
-            {"status": "in_progress", "in_progress_data": in_progress_process}
+            {
+                "status": "in_progress",
+                "in_progress_data": _session_public(in_progress_process),
+            }
         )
+
+    # Machine already running a different WO
+    if machine_id:
+        busy = _find_running_on_machine(db, machine_id)
+        if busy and busy.get("work_order") != work_order:
+            return JsonResponse(
+                {
+                    "error": (
+                        f"Machine {machine_id} already running Work Order "
+                        f"{busy.get('work_order')}. Finish it first."
+                    ),
+                    "active_session": _session_public(busy),
+                },
+                status=409,
+            )
 
     sap_line = next((l for l in lines if not l["completed_in_sap"]), None)
 
@@ -519,7 +601,7 @@ def submit_production(request):
     mode = data.get("mode", "SUBMIT")  # "START" or "SUBMIT"
 
     if mode == "START":
-        # Handle "Start" button click - create IN_PROGRESS record
+        # Handle "Start" button click - create RUNNING record + begin poll
         work_order = data.get("work_order", "").strip()
         machine_id = data.get("machine_id", "").strip()
         process_name = data.get("process_name", "").strip()
@@ -531,6 +613,32 @@ def submit_production(request):
             )
 
         db = get_db_connection(plant_code)
+
+        # One RUNNING session per machine
+        existing_machine = _find_running_on_machine(db, machine_id)
+        if existing_machine:
+            active_wo = existing_machine.get("work_order", "")
+            return JsonResponse(
+                {
+                    "error": (
+                        f"Machine {machine_id} already has active Work Order "
+                        f"{active_wo}. Complete or stop it before starting another."
+                    ),
+                    "active_session": _session_public(existing_machine),
+                },
+                status=409,
+            )
+
+        if is_polling(machine_id):
+            return JsonResponse(
+                {
+                    "error": (
+                        f"Machine {machine_id} already has an active polling task."
+                    )
+                },
+                status=409,
+            )
+
         sap_plant_code = request.session.get(
             "wip_sap_plant_code"
         ) or get_sap_plant_code(db, plant_code)
@@ -551,6 +659,15 @@ def submit_production(request):
                 {"error": "Machine/Process not found in SAP lines."}, status=400
             )
 
+        # Fresh baseline from current machine API counter (never reuse prior WO)
+        try:
+            baseline_count = fetch_machine_counter(machine_id)
+        except RuntimeError as exc:
+            return JsonResponse(
+                {"error": f"Cannot read machine counter: {exc}"},
+                status=502,
+            )
+
         now = datetime.now()
         doc = {
             "operator_id": operator_id,
@@ -563,14 +680,50 @@ def submit_production(request):
             "production_count": 0,
             "rejected_count": 0,
             "woqty": display_woqty,
-            "status": "IN_PROGRESS",
+            "baseline_count": baseline_count,
+            "machine_counter": baseline_count,
+            "status": "RUNNING",
+            "poll_active": True,
+            "qty_reached": False,
+            "sap_posted": False,
             "start_time": now,
             "timestamp": now,
             "shift": determine_shift(now),
             "plant_code": plant_code,
+            "ws_group": machine_group_name(machine_id),
         }
-        db["PCB_Trace"].insert_one(doc)
-        return JsonResponse({"status": "success", "message": "Process started"})
+        insert_result = db["PCB_Trace"].insert_one(doc)
+        session_id = str(insert_result.inserted_id)
+        doc["_id"] = insert_result.inserted_id
+
+        started = start_machine_poller(machine_id, plant_code, session_id)
+        if not started:
+            # Race: another poller appeared — roll back session
+            db["PCB_Trace"].delete_one({"_id": insert_result.inserted_id})
+            return JsonResponse(
+                {
+                    "error": (
+                        f"Machine {machine_id} already has an active polling task."
+                    )
+                },
+                status=409,
+            )
+
+        traceability_logs(
+            request,
+            1,
+            (
+                f"WIP START WO={work_order} machine={machine_id} "
+                f"baseline={baseline_count} woqty={display_woqty}"
+            ),
+        )
+        return JsonResponse(
+            {
+                "status": "success",
+                "message": "Process started",
+                "session": _session_public(doc),
+            }
+        )
 
     # Default mode is "SUBMIT"
     if not data.get("process_started"):
@@ -644,12 +797,17 @@ def submit_production(request):
         "work_order": work_order,
         "machine_id": machine_id,
         "process_name": process_name,
-        "status": {"$in": ["COMPLETED", "IN_PROGRESS"]},
+        "status": {"$in": ["COMPLETED", "IN_PROGRESS", "RUNNING"]},
     }
     already_posted = list(db["PCB_Trace"].find(query).sort("timestamp", 1))
+    # Only SAP-posted COMPLETED rows count toward remaining balance.
+    # Active RUNNING / qty-reached (awaiting SAP) hold the live session count.
     total_posted = sum(
-        d.get("production_count", 0) + d.get("rejected_count", 0)
+        int(d.get("production_count", 0) or 0) + int(d.get("rejected_count", 0) or 0)
         for d in already_posted
+        if d.get("status") == "COMPLETED"
+        and (d.get("sap_posted") or d.get("sap_response"))
+        and not (d.get("qty_reached") and not d.get("sap_posted"))
     )
 
     # Use woqty from the existing PCB_Trace record if available — it reflects
@@ -677,7 +835,7 @@ def submit_production(request):
     # Block only if fully completed with no IN_PROGRESS record to update
     if (
         has_pcb_trace_completion(db, work_order, machine_id, process_name)
-        and not any(d.get("status") == "IN_PROGRESS" for d in already_posted)
+        and not any(d.get("status") in ACTIVE_STATUSES for d in already_posted)
         and remaining_qty <= 0
     ):
         return JsonResponse(
@@ -689,6 +847,30 @@ def submit_production(request):
     material_record = sap_line.get("material_record") or (
         material_plant_list[0] if material_plant_list else {}
     )
+
+    # Prefer live session count from DB when present
+    active_session = next(
+        (
+            d
+            for d in already_posted
+            if d.get("status") in ACTIVE_STATUSES
+            or (
+                d.get("status") == "COMPLETED"
+                and d.get("qty_reached")
+                and not d.get("sap_posted")
+            )
+        ),
+        None,
+    )
+    if active_session:
+        live_count = int(active_session.get("production_count", 0) or 0)
+        if live_count > 0:
+            production_count = live_count
+        wo_cap = int(active_session.get("woqty") or woqty_reference or 0)
+        if wo_cap > 0:
+            production_count = min(production_count, wo_cap)
+
+    stop_machine_poller(machine_id)
 
     sap_response = post_to_sap_prodent_ot(
         sap_code=sap_plant_code,
@@ -712,14 +894,31 @@ def submit_production(request):
     now = datetime.now()
     shift = determine_shift(now)
 
-    # Check if we are updating an IN_PROGRESS record
+    # Check if we are updating an active / qty-reached session
     in_progress_record = next(
-        (d for d in already_posted if d.get("status") == "IN_PROGRESS"), None
+        (
+            d
+            for d in already_posted
+            if d.get("status") in ACTIVE_STATUSES
+            or (
+                d.get("status") == "COMPLETED"
+                and d.get("qty_reached")
+                and not d.get("sap_posted")
+            )
+        ),
+        None,
     )
 
-    # The most recent COMPLETED record for this WO+machine+process (for partial top-up)
+    # The most recent SAP-posted COMPLETED record for this WO+machine+process
     last_completed_record = next(
-        (d for d in reversed(already_posted) if d.get("status") == "COMPLETED"), None
+        (
+            d
+            for d in reversed(already_posted)
+            if d.get("status") == "COMPLETED"
+            and (d.get("sap_posted") or d.get("sap_response"))
+            and d is not in_progress_record
+        ),
+        None,
     )
 
     # Preserve start_time and calculate duration
@@ -744,6 +943,9 @@ def submit_production(request):
         "rejected_count": rejected_count,
         "woqty": woqty_reference,
         "status": "COMPLETED",
+        "qty_reached": True,
+        "sap_posted": True,
+        "poll_active": False,
         "sap_response": sap_response,
         "start_time": start_time,
         "end_time": now,
@@ -755,13 +957,29 @@ def submit_production(request):
     }
 
     if in_progress_record:
-        # Promote IN_PROGRESS → COMPLETED, accumulate counts
-        doc["production_count"] = (
-            int(in_progress_record.get("production_count", 0) or 0) + production_count
-        )
-        doc["rejected_count"] = (
-            int(in_progress_record.get("rejected_count", 0) or 0) + rejected_count
-        )
+        # Promote RUNNING / qty-reached → SAP COMPLETED
+        # Keep baseline from original start; do not accumulate twice if qty already set
+        if (
+            in_progress_record.get("qty_reached")
+            or in_progress_record.get("status") in ACTIVE_STATUSES
+        ):
+            doc["production_count"] = max(
+                int(in_progress_record.get("production_count", 0) or 0),
+                production_count,
+            )
+            doc["rejected_count"] = (
+                int(in_progress_record.get("rejected_count", 0) or 0) + rejected_count
+            )
+            doc["baseline_count"] = in_progress_record.get("baseline_count")
+            doc["machine_counter"] = in_progress_record.get("machine_counter")
+        else:
+            doc["production_count"] = (
+                int(in_progress_record.get("production_count", 0) or 0)
+                + production_count
+            )
+            doc["rejected_count"] = (
+                int(in_progress_record.get("rejected_count", 0) or 0) + rejected_count
+            )
         db["PCB_Trace"].replace_one({"_id": in_progress_record["_id"]}, doc)
     elif last_completed_record:
         # Partial top-up: accumulate onto existing COMPLETED record (same _id)
@@ -806,3 +1024,68 @@ def submit_production(request):
             "sap_response": sap_response,
         }
     )
+
+
+@require_GET
+def session_status(request):
+    """
+    HTTP fallback / resume poll for live production count.
+    Query: machine_id=...  (preferred) or session_id=...
+    """
+    plant_code, err = _plant_required(request)
+    if err:
+        return err
+
+    machine_id = (request.GET.get("machine_id") or "").strip()
+    session_id = (request.GET.get("session_id") or "").strip()
+    if not machine_id and not session_id:
+        return JsonResponse({"error": "machine_id or session_id required"}, status=400)
+
+    db = get_db_connection(plant_code)
+    doc = None
+    if session_id:
+        try:
+            doc = db["PCB_Trace"].find_one({"_id": ObjectId(session_id)})
+        except Exception:
+            return JsonResponse({"error": "Invalid session_id"}, status=400)
+    if doc is None and machine_id:
+        doc = _find_running_on_machine(db, machine_id)
+        if doc is None:
+            doc = db["PCB_Trace"].find_one(
+                {
+                    "machine_id": machine_id,
+                    "status": "COMPLETED",
+                    "qty_reached": True,
+                    "sap_posted": {"$ne": True},
+                },
+                sort=[("timestamp", -1)],
+            )
+
+    if not doc:
+        return JsonResponse(
+            {
+                "status": "idle",
+                "machine_id": machine_id,
+                "polling": is_polling(machine_id),
+            }
+        )
+
+    # Restart poller if session still RUNNING but thread died
+    if (
+        doc.get("status") in ACTIVE_STATUSES
+        and doc.get("poll_active")
+        and machine_id
+        and not is_polling(machine_id)
+    ):
+        start_machine_poller(
+            machine_id or doc.get("machine_id", ""), plant_code, str(doc["_id"])
+        )
+
+    payload = _session_public(doc)
+    payload["polling"] = is_polling(payload.get("machine_id") or machine_id)
+    payload["event"] = (
+        "completed"
+        if payload.get("status") == "COMPLETED" and payload.get("qty_reached")
+        else "production_update"
+    )
+    return JsonResponse({"status": "success", **payload})

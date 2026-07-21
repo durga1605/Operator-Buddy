@@ -122,6 +122,7 @@
       validate: form.getAttribute("data-url-validate"),
       submit: form.getAttribute("data-url-submit"),
       machineProcesses: form.getAttribute("data-url-machine-processes"),
+      sessionStatus: form.getAttribute("data-url-session-status"),
     };
 
     var state = {
@@ -143,6 +144,11 @@
       seconds: 0,
       inProgress: false,
       rejectionDetails: [],
+      sessionId: "",
+      woQty: 0,
+      ws: null,
+      statusPollTimer: null,
+      qtyReached: false,
     };
 
     function el(id) {
@@ -248,6 +254,144 @@
       }
     }
 
+    function stopLiveUpdates() {
+      if (state.statusPollTimer) {
+        clearInterval(state.statusPollTimer);
+        state.statusPollTimer = null;
+      }
+      if (state.ws) {
+        try {
+          state.ws.close();
+        } catch (e) {}
+        state.ws = null;
+      }
+    }
+
+    function applyProductionUpdate(payload) {
+      if (!payload) return;
+      if (payload.production_count != null) {
+        el("production_count").value = String(payload.production_count);
+      }
+      if (payload.woqty != null) {
+        state.woQty = Number(payload.woqty) || state.woQty;
+        el("display_woqty").textContent = String(state.woQty);
+      }
+      var qtyReached =
+        payload.event === "completed" ||
+        payload.qty_reached === true ||
+        (state.woQty > 0 && Number(payload.production_count) >= state.woQty);
+
+      if (qtyReached) {
+        state.qtyReached = true;
+        el("production_count").value = String(
+          state.woQty || payload.production_count || 0,
+        );
+        lockInput("start-btn");
+        enableInput("production_count", false);
+        enableInput("rejected_count", true);
+        enableInput("submit-btn", true);
+        setStatus("WO qty reached — Submit to SAP", "success");
+        stopLiveUpdates();
+        return;
+      }
+
+      if (payload.event === "poll_error") {
+        setStatus(payload.error || "Machine API poll error", "error");
+        return;
+      }
+
+      setStatus(
+        "Running — count " +
+          (payload.production_count || 0) +
+          (state.woQty ? " / " + state.woQty : ""),
+        "success",
+      );
+    }
+
+    function startHttpStatusPoll(machineId) {
+      if (!urls.sessionStatus || !machineId) return;
+      if (state.statusPollTimer) clearInterval(state.statusPollTimer);
+      function tick() {
+        var q =
+          urls.sessionStatus + "?machine_id=" + encodeURIComponent(machineId);
+        fetch(q, { credentials: "same-origin" })
+          .then(function (r) {
+            return r.json();
+          })
+          .then(function (data) {
+            if (data.status === "idle") return;
+            applyProductionUpdate(data);
+          })
+          .catch(function () {});
+      }
+      tick();
+      state.statusPollTimer = setInterval(tick, 2000);
+    }
+
+    function startMachineLiveUpdates(machineId, session) {
+      stopLiveUpdates();
+      state.machineId = machineId || state.machineId;
+      if (session) {
+        state.sessionId = session.session_id || state.sessionId;
+        state.woQty = Number(session.woqty) || state.woQty;
+        if (session.production_count != null) {
+          el("production_count").value = String(session.production_count);
+        }
+      }
+
+      var proto = window.location.protocol === "https:" ? "wss://" : "ws://";
+      var wsUrl =
+        proto +
+        window.location.host +
+        "/ws/machine/" +
+        encodeURIComponent(machineId) +
+        "/";
+      try {
+        state.ws = new WebSocket(wsUrl);
+        state.ws.onmessage = function (evt) {
+          try {
+            applyProductionUpdate(JSON.parse(evt.data));
+          } catch (e) {}
+        };
+        state.ws.onerror = function () {
+          /* HTTP poll covers fallback */
+        };
+        state.ws.onclose = function () {
+          state.ws = null;
+        };
+      } catch (e) {}
+
+      startHttpStatusPoll(machineId);
+    }
+
+    function enterRunningUi(session, elapsedSeconds) {
+      state.processStarted = true;
+      state.inProgress = true;
+      state.qtyReached = !!(session && session.qty_reached);
+      state.sessionId = (session && session.session_id) || state.sessionId;
+      state.woQty = Number((session && session.woqty) || state.woQty) || 0;
+
+      activateSection("step-production");
+      lockInput("start-btn");
+      enableInput("production_count", false);
+      el("production_count").readOnly = true;
+      enableInput("rejected_count", true);
+
+      if (state.qtyReached || (session && session.status === "COMPLETED")) {
+        enableInput("submit-btn", true);
+        if (session && session.production_count != null) {
+          el("production_count").value = String(session.production_count);
+        }
+        setStatus("WO qty reached — Submit to SAP", "success");
+      } else {
+        enableInput("submit-btn", false);
+        setStatus("Process running — live count from machine", "success");
+        startMachineLiveUpdates(state.machineId, session || null);
+      }
+
+      startTimer(elapsedSeconds || 0);
+    }
+
     /* ── Resume PARTIAL (balance remaining from prior COMPLETED) ── */
 
     /**
@@ -299,6 +443,7 @@
       activateSection("step-production");
       lockInput("start-btn");
       enableInput("production_count", true);
+      el("production_count").readOnly = false;
       enableInput("rejected_count", true);
       enableInput("submit-btn", true);
 
@@ -335,6 +480,9 @@
       state.processName = d.process_name || "";
       state.materialCode = d.material_code || "";
       state.partNo = d.part_no || "";
+      state.sessionId = d.session_id || "";
+      state.woQty = Number(d.woqty) || 0;
+      state.qtyReached = !!(d.qty_reached || d.awaiting_sap);
 
       /* Work order info panel */
       lockInput("work_order");
@@ -356,18 +504,12 @@
       fillProcessOptions([state.processName], state.processName);
       enableInput("process_select", false);
 
-      /* Jump to production section */
-      activateSection("step-production");
-      enableInput("production_count", true);
-      enableInput("rejected_count", true);
-      enableInput("submit-btn", true);
-      lockInput("start-btn");
+      if (d.production_count != null) {
+        el("production_count").value = String(d.production_count);
+      }
 
-      /* Resume timer from elapsed seconds already on the clock */
-      startTimer(d.elapsed_seconds || 0);
-
-      setStatus("Process in progress — enter counts and submit", "success");
-      focusInput("production_count");
+      enterRunningUi(d, d.elapsed_seconds || 0);
+      focusInput(state.qtyReached ? "rejected_count" : "production_count");
     }
 
     /* ── Balance alert ──────────────────────────────────────── */
@@ -596,11 +738,21 @@
       enableInput("start-btn", false);
 
       postJson(urls.submit, payload)
-        .then(function () {
-          state.processStarted = true;
-
-          /* Start button clicked — redirect to home */
-          window.location.href = "/mobility/";
+        .then(function (data) {
+          var session = data.session || {};
+          state.sessionId = session.session_id || "";
+          state.woQty = Number(session.woqty) || state.woQty;
+          if (session.woqty != null) {
+            el("display_woqty").textContent = String(session.woqty);
+          }
+          el("production_count").value = "0";
+          enterRunningUi(session, 0);
+          setStatus(
+            "Started — baseline " +
+              (session.baseline_count != null ? session.baseline_count : "—") +
+              ", live count from machine",
+            "success",
+          );
         })
         .catch(function (err) {
           setStatus(err.message, "error");
@@ -682,6 +834,7 @@
 
       postJson(urls.submit, payload)
         .then(function (data) {
+          stopLiveUpdates();
           stopTimer();
           window.alert(data.message || "Saved");
           if (data.status === "success") {

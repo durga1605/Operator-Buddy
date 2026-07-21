@@ -2,8 +2,9 @@
 Django settings for the Traceability project.
 """
 
-from pathlib import Path
 import sys
+from pathlib import Path
+
 from cryptography.fernet import Fernet
 from decouple import config
 
@@ -29,6 +30,21 @@ INSTALLED_APPS = [
     "csp",
 ]
 
+try:
+    import channels  # noqa: F401
+    import daphne  # noqa: F401
+
+    INSTALLED_APPS = ["daphne", "channels", *INSTALLED_APPS]
+    ASGI_APPLICATION = "Config.asgi.application"
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer",
+        }
+    }
+except ImportError:
+    ASGI_APPLICATION = "Config.asgi.application"
+    CHANNEL_LAYERS = {}
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -47,7 +63,7 @@ CSP_HEADER_NAME = "Content-Security-Policy"
 CONTENT_SECURITY_POLICY = {
     "DIRECTIVES": {
         "base-uri": ["'self'"],
-        "connect-src": ["'self'"],
+        "connect-src": ["'self'", "ws:", "wss:"],
         "default-src": ["'self'"],
         "frame-src": ["'self'"],
         "img-src": ["'self'", "data:"],
@@ -158,6 +174,15 @@ MEDIA_ROOT = f"{BASE_DIR}/media/"
 
 APILOGIN = config("APILOGIN")
 BAPI_API = config("BAPI_API")
+
+# MTLINK machine counter API (PartsNum / PartCounter logs)
+MTLINK_API_BASE_URL = config("MTLINK_API_BASE_URL")
+MTLINK_API_USER = config("MTLINK_API_USER")
+MTLINK_API_PASSWORD = config("MTLINK_API_PASSWORD")
+MTLINK_POLL_INTERVAL_SEC = config("MTLINK_POLL_INTERVAL_SEC", default=2.0, cast=float)
+# Full /logs history is multi-MB; request only recent window via ?from=
+MTLINK_LOG_LOOKBACK_HOURS = config("MTLINK_LOG_LOOKBACK_HOURS", default=6.0, cast=float)
+MTLINK_HTTP_TIMEOUT_SEC = config("MTLINK_HTTP_TIMEOUT_SEC", default=30.0, cast=float)
 
 LOGOUT_REDIRECT_URL = "/"
 

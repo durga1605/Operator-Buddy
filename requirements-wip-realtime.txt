@@ -1,0 +1,3 @@
+# WIP machine polling + WebSocket (optional but recommended)
+channels>=4.0
+daphne>=4.0
