@@ -123,6 +123,7 @@
       submit: form.getAttribute("data-url-submit"),
       machineProcesses: form.getAttribute("data-url-machine-processes"),
       sessionStatus: form.getAttribute("data-url-session-status"),
+      home: form.getAttribute("data-url-home") || "/mobility/",
     };
 
     var state = {
@@ -738,21 +739,10 @@
       enableInput("start-btn", false);
 
       postJson(urls.submit, payload)
-        .then(function (data) {
-          var session = data.session || {};
-          state.sessionId = session.session_id || "";
-          state.woQty = Number(session.woqty) || state.woQty;
-          if (session.woqty != null) {
-            el("display_woqty").textContent = String(session.woqty);
-          }
-          el("production_count").value = "0";
-          enterRunningUi(session, 0);
-          setStatus(
-            "Started — baseline " +
-              (session.baseline_count != null ? session.baseline_count : "—") +
-              ", live count from machine",
-            "success",
-          );
+        .then(function () {
+          /* Backend poller keeps counting; leave WIP UI → home */
+          setStatus("Started — counting in background…", "success");
+          window.location.href = urls.home;
         })
         .catch(function (err) {
           setStatus(err.message, "error");

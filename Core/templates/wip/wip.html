@@ -13,7 +13,7 @@
     <div class="alert alert-danger wip-alert" role="alert">{{ error }}</div>
     {% endif %}
 
-    <form id="wip-form" class="wip-scan-form" novalidate data-url-work-order="{% url 'scan_work_order' %}" data-url-operator="{% url 'scan_operator' %}" data-url-validate="{% url 'validate_machine_process' %}" data-url-submit="{% url 'submit_production' %}" data-url-machine-processes="{% url 'get_machine_processes' %}" data-url-session-status="{% url 'session_status' %}">
+    <form id="wip-form" class="wip-scan-form" novalidate data-url-work-order="{% url 'scan_work_order' %}" data-url-operator="{% url 'scan_operator' %}" data-url-validate="{% url 'validate_machine_process' %}" data-url-submit="{% url 'submit_production' %}" data-url-machine-processes="{% url 'get_machine_processes' %}" data-url-session-status="{% url 'session_status' %}" data-url-home="{% url 'mobility' %}">
         {% csrf_token %}
 
         <section class="wip-card">
